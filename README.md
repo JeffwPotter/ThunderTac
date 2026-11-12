@@ -3,6 +3,21 @@
 A private, offline, Tacview-style debrief tool for War Thunder server replays.
 Scope and plan live in the claude.ai Project ("War Thunder Replay Viewer").
 
+## For testers (Windows 10/11)
+1. Download the latest zip from the repo's **Releases** page (or from whoever sent it to you) and extract it to a folder you can write to, such as `C:\WarThunderViewer`. Not into `Program Files`.
+2. Double-click `Open Viewer.bat`. The viewer opens in its own window. If Windows SmartScreen warns about an unknown program, choose More info, then Run anyway (the programs are not signed).
+3. **Add a match:** click **+ Add match** and paste a session ID or replay link from warthunder.com (the number in the replay page address, or the 16-letter/number ID). It downloads, converts and opens the match. Or put a downloaded replay (`.wrpl` or its `.zip`) through `tools\convert.bat`.
+4. **Optional, once per game update:** run `tools\update-game-data.bat` to read your own War Thunder install (names, missiles, radars, terrain). It asks for the game folder if it cannot find it. Takes a few minutes and about 800 MB of temporary space.
+5. Debrief and Library work on any converted match; Library gets better with more matches.
+
+**If something goes wrong** send the author:
+- what you clicked and what happened (a screenshot helps), and
+- the file `%LocalAppData%\WTReplayViewer\viewer.log` (paste `%LocalAppData%` into File Explorer's address bar).
+
+`bin\wtviewer-console.exe` is the same program with a text window; run it from a Command Prompt to see messages live. `bin\wtviewer.exe -browser` opens the viewer in Edge instead of its own window.
+
+Nothing is uploaded anywhere. "+ Add match" only downloads the public replay files from War Thunder's replay server.
+
 ## Game data catalogue (names, missiles, radars, mission areas) and terrain
 `assets\catalog\` holds four small files read from your own game install.
 They ship filled in; after a game update run `tools\update-game-data.bat`

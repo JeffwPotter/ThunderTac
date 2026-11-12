@@ -1,0 +1,45 @@
+# Builds the Windows programs and attaches a zip to a GitHub Release.
+# Use: push a tag such as v0.8.1 (git tag v0.8.1 && git push origin v0.8.1),
+# or run "Release" by hand from the Actions tab and give a tag name.
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to release (for example v0.8.1)
+        required: true
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Build Windows programs
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          GOFLAGS: -mod=mod
+          GOPROXY: 'off'
+          GOTOOLCHAIN: local
+        run: |
+          mkdir -p bin
+          (cd decoder && go build -trimpath -o ../bin/wtdecode.exe ./cmd/wtdecode && go build -trimpath -o ../bin/wtassets.exe ./cmd/wtassets)
+          (cd viewer/server && go build -trimpath -ldflags "-H windowsgui" -o ../../bin/wtviewer.exe ./ && go build -trimpath -o ../../bin/wtviewer-console.exe ./)
+      - name: Package
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          mkdir -p sessions
+          zip -r "WarThunderReplayViewer-${TAG}.zip" bin assets tools docs golden "Open Viewer.bat" README.md sessions
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes "Windows build. Extract the zip, then see 'For testers' in README.md."
+          gh release upload "$TAG" "WarThunderReplayViewer-${TAG}.zip" --clobber
