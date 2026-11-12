@@ -127,7 +127,9 @@ func catalog(args []string) error {
 		// physics for the fly-out estimate (viewer analysis)
 		ph := map[string]any{}
 		copyKeys(ph, r, map[string]string{"caliber": "caliberM", "CxK": "cxK", "dragCx": "dragCx", "force": "thrustN", "timeFire": "burnS",
-			"mass": "massKg", "massEnd": "massEndKg", "machMax": "machMax", "timeLife": "lifeS", "loadFactorMax": "maxG"})
+			"mass": "massKg", "massEnd": "massEndKg", "machMax": "machMax", "timeLife": "lifeS", "loadFactorMax": "maxG",
+			// second (sustainer) motor stage, where the game file has one
+			"timeFire1": "burn1S", "force1": "thrust1N", "massEnd1": "massEnd1Kg"})
 		copyKeys(ph, g, map[string]string{"workTime": "guidanceTimeS"})
 		if ap, ok := g["guidanceAutopilot"].(map[string]any); ok {
 			copyKeys(ph, ap, map[string]string{"loftEnabled": "loft", "loftElevation": "loftElevationDeg"})

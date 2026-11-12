@@ -4,7 +4,7 @@
 import { Session, Unit, fmtClock, idxAt } from './data';
 import { Settings, fmtAlt, fmtSpeed, fmtDist } from './scene';
 import { chart, bars, PAL } from './charts';
-import { loadLibrary, usableShots, estimatePk, LibShot } from './pk';
+import { loadLibrary, usableShots, estimatePk, scopeNames, PkScope, LibShot } from './pk';
 
 export interface DebriefHost {
   ses(): Session | null;
@@ -187,10 +187,12 @@ export class Debrief {
     c.append(bar, h('span', 'rtxt', fmtDist(s.rangeM, units) + ' · max ' + fmtDist(s.rmaxM, units) + ' · NEZ ' + fmtDist(s.rneM || 0, units)));
     return c;
   }
-  private pkFor(s: any) {
+  private pkFor(s: any, scope: PkScope = 'all') {
     if (!this.lib || s.rangeM == null || s.aspectDeg == null || s.shooterAltM == null || s.targetAltM == null) return null;
+    const st = this.host.settings;
     return estimatePk(this.lib, { model: s.model, guidance: s.guidance, range: s.rangeM, aspect: s.aspectDeg, shooterAlt: s.shooterAltM, targetAlt: s.targetAltM,
-      shooterMach: s.shooterMach ?? 0.9, targetMach: s.targetMach ?? 0.9, targetAgl: s.targetAglM }, { match: this.ana.session, t: s.t });
+      shooterMach: s.shooterMach ?? 0.9, targetMach: s.targetMach ?? 0.9, targetAgl: s.targetAglM, multipath: s.multipathLaunch ?? undefined },
+      { match: this.ana.session, t: s.t }, scopeNames(scope, st.me, st.wingmen));
   }
   private pkCell(s: any): HTMLElement {
     const c = h('div', 'num');
@@ -213,6 +215,12 @@ export class Debrief {
     if (s.multipathTerminal > 0 && s.targetAglMinM != null) left.appendChild(h('div', 'fine', 'Target\'s lowest height during the last 10 s of the flight: ' + fmtAlt(Math.max(0, s.targetAglMinM), units)));
     const r = this.pkFor(s);
     if (r) left.appendChild(h('div', 'fine', 'Pk from history: ' + Math.round(r.pk * 100) + '% (' + r.n + ' similar shots from ' + r.pool + ', 90% range ' + Math.round(r.lo * 100) + '–' + Math.round(r.hi * 100) + '%)'));
+    // the same shot judged only against my own shots, and against mine + my wingman's (needs 8 or more)
+    for (const [sc, lbl] of [['self', 'your own shots'], ['squad', 'your and your wingman\'s shots']] as [PkScope, string][]) {
+      if (sc === 'squad' && !(this.host.settings.wingmen || '').trim()) continue;
+      const rs = this.pkFor(s, sc);
+      if (rs) left.appendChild(h('div', 'fine', 'Pk from ' + lbl + ': ' + Math.round(rs.pk * 100) + '% (' + rs.n + ' similar shots' + (r ? '; everyone: ' + Math.round(r.pk * 100) + '%' : '') + ')'));
+    }
     const right = h('div'); right.appendChild(h('h4', '', 'After the launch'));
     const kv = h('div', 'kv2');
     const add = (k: string, v: string) => { kv.append(h('span', '', k), h('b', '', v)); };

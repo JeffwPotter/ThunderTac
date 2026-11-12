@@ -1,9 +1,13 @@
 // Missile fly-out estimate ("launch envelope").
 //
 // A point-mass model: thrust for the burn time, mass falling linearly to the
-// burnt-out mass, drag = ½ρv²·A·CxK·r(M), where r(M) is one Mach-dependent
-// shape fitted to missile speeds recorded in the reference replays (radar
-// missiles: distance flown after 10–40 s within about 3 % of the recording).
+// burnt-out mass (then a second, sustainer stage with its own thrust, burn time
+// and burnt-out mass, when the game file has one), drag = k·½ρv²·A·CxK·r(M).
+// r(M) is one Mach-dependent shape and k = dragFit a single scale, fitted to
+// missile flights recorded in the reference replays: distance flown after
+// 10–40 s, median model/recorded 1.00 for both one- and two-stage radar
+// missiles (1,417 samples, 438 missiles, v0.8.2). k absorbs the drag of
+// manoeuvring, which the model does not simulate.
 // The same model is in viewer/web/src/envelope.ts; keep the two identical.
 package main
 
@@ -12,6 +16,7 @@ import "math"
 type missilePhys struct {
 	Name                       string
 	Caliber, CxK, Thrust, Burn float64
+	Thrust1, Burn1, MassEnd1   float64 // second (sustainer) stage; Burn1 = 0 for one-stage motors
 	Mass, MassEnd, MachMax     float64
 	Life, GuidanceTime         float64
 	Loft                       bool
@@ -24,6 +29,9 @@ type missilePhys struct {
 
 // drag shape r(M) = Cd / CxK
 var dragShape = [][2]float64{{0, 0.30}, {0.8, 0.32}, {1.0, 0.55}, {1.2, 0.62}, {1.4, 0.58}, {1.8, 0.48}, {2.2, 0.43}, {2.7, 0.37}, {3.2, 0.34}, {3.7, 0.32}, {5, 0.29}}
+
+// dragFit scales the drag shape (see the comment at the top).
+const dragFit = 1.4
 
 func dragRatio(m float64) float64 {
 	for i := 0; i < len(dragShape)-1; i++ {
@@ -66,6 +74,26 @@ func (m *missilePhys) multipathAt(agl float64) float64 {
 	return e0 + (e1-e0)*(agl-x0)/(x1-x0)
 }
 
+// motor returns thrust (N) and mass (kg) at time t after launch.
+func (m *missilePhys) motor(t float64) (float64, float64) {
+	if m.Burn <= 0 && m.Burn1 <= 0 {
+		return 0, m.Mass
+	}
+	if t < m.Burn {
+		return m.Thrust, m.Mass - (m.Mass-m.MassEnd)*t/m.Burn
+	}
+	if m.Burn1 > 0 && t < m.Burn+m.Burn1 {
+		return m.Thrust1, m.MassEnd - (m.MassEnd-m.MassEnd1)*(t-m.Burn)/m.Burn1
+	}
+	if m.Burn1 > 0 {
+		return 0, m.MassEnd1
+	}
+	return 0, m.MassEnd
+}
+
+// burnTotal is the time until the motor (both stages) has burnt out.
+func (m *missilePhys) burnTotal() float64 { return m.Burn + m.Burn1 }
+
 // reaches: can the missile reach a target that starts at horizontal range r,
 // with velocity (vx toward the shooter is negative x), before it is too slow
 // or out of time?
@@ -89,15 +117,8 @@ func (m *missilePhys) reaches(r, h0, h1, v0, tvx, tvz, tSpeed float64) bool {
 	v, s, t := math.Max(v0, 50), 0.0, 0.0
 	const dt = 0.1
 	for t < tMax {
-		mass := m.Mass
-		if m.Burn > 0 {
-			mass = m.Mass - (m.Mass-m.MassEnd)*math.Min(t, m.Burn)/m.Burn
-		}
-		F := 0.0
-		if t < m.Burn {
-			F = m.Thrust
-		}
-		D := 0.5 * rho * v * v * A * m.CxK * dragRatio(v/snd)
+		F, mass := m.motor(t)
+		D := dragFit * 0.5 * rho * v * v * A * m.CxK * dragRatio(v/snd)
 		v += ((F-D)/mass - 9.81*sinG) * dt
 		if m.MachMax > 0 {
 			v = math.Min(v, m.MachMax*snd)
@@ -107,9 +128,9 @@ func (m *missilePhys) reaches(r, h0, h1, v0, tvx, tvz, tSpeed float64) bool {
 		px, pz := r+tvx*t, tvz*t
 		need := math.Sqrt(px*px + pz*pz + dh*dh)
 		if s >= need {
-			return v >= vMin || t < m.Burn
+			return v >= vMin || t < m.burnTotal()
 		}
-		if v < vMin && t > m.Burn {
+		if v < vMin && t > m.burnTotal() {
 			return false
 		}
 	}
@@ -180,6 +201,7 @@ func (c *wCatalog) physics(u *wUnit) *missilePhys {
 	m.Known = true
 	m.Caliber, m.CxK, m.Thrust, m.Burn = numOf(p, "caliberM", 0), numOf(p, "cxK", 1), numOf(p, "thrustN", 0), numOf(p, "burnS", 0)
 	m.Mass, m.MassEnd, m.MachMax = numOf(p, "massKg", 0), numOf(p, "massEndKg", 0), numOf(p, "machMax", 0)
+	m.Thrust1, m.Burn1, m.MassEnd1 = numOf(p, "thrust1N", 0), numOf(p, "burn1S", 0), numOf(p, "massEnd1Kg", 0)
 	m.Life, m.GuidanceTime, m.SeekerRange, m.MaxG = numOf(p, "lifeS", 60), numOf(p, "guidanceTimeS", 60), numOf(p, "seekerRangeM", 0), numOf(p, "maxG", 0)
 	m.Loft, _ = p["loft"].(bool)
 	if mp, ok := p["multipath"].([]any); ok && len(mp) == 4 {
@@ -193,6 +215,9 @@ func (c *wCatalog) physics(u *wUnit) *missilePhys {
 	}
 	if m.MassEnd <= 0 {
 		m.MassEnd = m.Mass
+	}
+	if m.MassEnd1 <= 0 {
+		m.MassEnd1 = m.MassEnd
 	}
 	return m
 }

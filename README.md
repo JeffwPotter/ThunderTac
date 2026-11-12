@@ -42,7 +42,7 @@ window does not appear, run `bin\wtviewer-console.exe` to see messages (or read
 `%LocalAppData%\WTReplayViewer\viewer.log`); `bin\wtviewer.exe -browser`
 opens it in Edge/your browser instead.
 
-## What is here (v0.8.1, 2026-11-12)
+## What is here (v0.8.2, 2026-11-12)
 
 | Folder | What |
 |---|---|

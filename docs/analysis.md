@@ -14,11 +14,26 @@ from positions, radar states and missile seeker states, and is an estimate.
 Point-mass model per missile, using the missile's own figures from the game
 files (`assets\catalog\weapons.json`, from `wtassets catalog`): thrust and burn
 time, mass before and after burn, calibre, drag factor `CxK`, top Mach,
-guidance time. Drag = ½ρv²·A·CxK·r(M), standard atmosphere. r(M) is one shape
-fitted to missile speeds recorded in the four reference replays.
+guidance time. Drag = k·½ρv²·A·CxK·r(M), standard atmosphere. r(M) is one
+shape and k = 1.4 one scale, fitted to missile flights recorded in the four
+reference replays (k stands in for the drag of manoeuvring, which is not
+simulated).
 
-Check against the recordings: for radar missiles, distance flown after
-10–40 s is within about 3 % of the recorded flights (median).
+Two-stage (boost + sustain) motors: when the catalogue has a second stage
+(`burn1S`, `thrust1N`, `massEnd1Kg`, read from `timeFire1` / `force1` /
+`massEnd1` in the game file) the model burns stage 1 after stage 0, with the
+mass falling from the stage-0 burnt-out mass to the stage-1 one. `timeFire1`
+is read as the sustainer's burn duration (AIM-7M: 4.5 s boost, then 11 s
+sustain). 192 of 442 missiles have one, among them AIM-7F/M/P, AIM-120A/B,
+R-27ER, PL-12, Derby, AAM-4, Fakour-90. Before v0.8.2 the sustainer was
+ignored, which made two-stage missiles fly about 18 % short (AIM-120 27 %)
+while the drag shape compensated by making one-stage missiles fly 8 % long.
+
+Check against the recordings (v0.8.2, 438 radar missiles, 1,417 samples):
+distance flown after 10–40 s, median model/recorded 1.005 for one-stage and
+1.001 for two-stage motors. `viewer/server/envelope_check_test.go` repeats
+this (and the outcome check below) on any folder of matches:
+`WTRV_SESSIONS=<folder> go test -run Check -v .` in `viewer/server`.
 
 - **Max range**: the target keeps flying as it is at launch.
 - **No-escape range (NEZ)**: the target turns away at launch and runs at its speed.
@@ -26,12 +41,16 @@ Check against the recordings: for radar missiles, distance flown after
   out and while it is faster than 280 m/s and 1.1 × the target.
 - Lofting missiles: drag is taken at a higher altitude for long shots (rough).
 
-Check against outcomes (581 shots, four matches): 92 % of kills were inside
-the estimated max range. Kill rate inside NEZ 39 %, between NEZ and 85 % of
-max range 14 %, beyond that 9 %.
+Check against outcomes (441 graded shots, four matches, v0.8.2): 94 % of
+kills were inside the estimated max range (92 % before v0.8.2). Kill rate
+inside NEZ 41 % (was 39 %), between NEZ and 85 % of max range 16 % (14 %),
+beyond that 10 % (9 %).
 
 The same model runs in the browser (`viewer/web/src/envelope.ts`) for the
-launch-zone rings and the Pk calculator. Keep the two identical.
+launch-zone rings and the Pk calculator. Keep the two identical:
+`viewer/server/envelope_parity_test.go` runs both on the same cases and fails
+if they differ (`go test` in `viewer/server`; needs Node.js 22.18+, skipped
+without it).
 
 ## Shot grade (each missile fired)
 Each factor is good / fair / poor; the shot gets its worst factor.
@@ -65,7 +84,15 @@ Among all recorded shots in the selected matches (every player), the 8–30
 most similar shots with the same missile (or family, or guidance type when
 there are too few) are taken; Pk = share that killed, with a 90 % (Wilson)
 range. Similarity: range, aspect, both altitudes, both Mach numbers, and
-whether the target was below 60 m. Shots whose target was destroyed by
+(radar missiles) the multipath effect at the target's height, as a strength
+from 0 to 1 taken from each missile's own table, so a shot at 48 m and one at
+52 m count as alike.
+
+**Whose shots:** everyone's by default. The Library Pk calculator has "Only
+my shots" and "Me + wingman" (the player names in the top bar: Me, Wingman;
+several wingmen separated by commas). The Debrief shot details show the same
+shot against your own shots, and against yours and your wingman's, next to
+everyone's, once there are 8 or more similar shots. Shots whose target was destroyed by
 something else, or whose target is unknown, are left out. Rough until there
 are a few dozen matches.
 
@@ -82,7 +109,7 @@ are a few dozen matches.
 ## Deaths
 Tags: no or late reaction, not notching, radar locked on someone else when
 the killing missile was fired (target fixation), alone (no teammate within
-15 km), outnumbered (3+ enemies within 20 km), slow (below Mach 0.7), lost a
+20 km), outnumbered (3+ enemies within 20 km), slow (below Mach 0.7), lost a
 lot of speed in the last 30 s, two or more missiles at you in the last minute,
 crash, team kill.
 

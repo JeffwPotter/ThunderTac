@@ -14,7 +14,7 @@ import (
 	"strings"
 )
 
-const analysisVersion = "a3"
+const analysisVersion = "a4" // a4: two-stage motors, drag fit (v0.8.2)
 
 const (
 	nearKm          = 40.0 // "enemy nearby"

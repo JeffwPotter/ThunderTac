@@ -3,15 +3,15 @@
 import { loadTerrain, Terrain } from './data';
 import { Settings, fmtAlt, fmtDist } from './scene';
 import { chart, PAL } from './charts';
-import { loadLibrary, usableShots, estimatePk, family, LibShot } from './pk';
-import { loadWeapons, physFor, envelope } from './envelope';
+import { loadLibrary, usableShots, estimatePk, family, scopeNames, PkScope, LibShot } from './pk';
+import { loadWeapons, physFor, envelope, multipathAt } from './envelope';
 
 function h(tag: string, cls = '', text = ''): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; }
 const pct = (v: number | null | undefined) => v == null || !isFinite(v) ? '—' : Math.round(v * 100) + '%';
 const avg = (a: number[]) => { const v = a.filter(x => x != null && isFinite(x)); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : NaN; };
 const prettyLevel = (l: string) => (l || '').replace(/^(air|avg)_/, '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
-export interface LibraryHost { settings: Settings; openMatch(id: string): void; close(): void; }
+export interface LibraryHost { settings: Settings; openMatch(id: string): void; close(): void; saveSettings?(): void; }
 
 interface MatchRow { m: any; me: any | null; date: Date; }
 
@@ -213,6 +213,11 @@ export class Library {
       w.append(inp, out); form.appendChild(w);
     };
     const mw = h('label', 'pkf'); mw.append(h('span', '', 'Missile'), ms); form.appendChild(mw);
+    const sc = document.createElement('select');
+    sc.append(new Option('All players', 'all'), new Option('Only my shots', 'self'), new Option('Me + wingman', 'squad'));
+    sc.value = this.host.settings.pkScope || 'all';
+    sc.onchange = () => { this.host.settings.pkScope = sc.value as PkScope; this.host.saveSettings?.(); update(); };
+    const sw = h('label', 'pkf'); sw.append(h('span', '', 'Shots from'), sc); form.appendChild(sw);
     fld('Range', 'range', 500, 1000, 90000, v => fmtDist(v, units));
     fld('Target aspect (0 = flying at you)', 'aspect', 5, 0, 180, v => v + '°');
     fld('Your altitude', 'shooterAlt', 250, 0, 14000, v => fmtAlt(v, units));
@@ -226,11 +231,15 @@ export class Library {
     const update = () => {
       out.innerHTML = '';
       const pool = shots;
-      const r = estimatePk(pool, { model: st.model, guidance: pool.find(s => s.model === st.model)?.guidance || '', range: st.range, aspect: st.aspect, shooterAlt: st.shooterAlt, targetAlt: st.targetAlt, shooterMach: st.shooterMach, targetMach: st.targetMach, targetAgl: st.targetAgl });
+      const phq = physFor(undefined, st.model);
+      const q = { model: st.model, guidance: pool.find(s => s.model === st.model)?.guidance || '', range: st.range, aspect: st.aspect, shooterAlt: st.shooterAlt, targetAlt: st.targetAlt, shooterMach: st.shooterMach, targetMach: st.targetMach, targetAgl: st.targetAgl, multipath: phq ? multipathAt(phq, st.targetAgl) : undefined };
+      const set = this.host.settings, scope: PkScope = set.pkScope || 'all';
+      const r = estimatePk(pool, q, undefined, scopeNames(scope, set.me, set.wingmen));
+      const rAll = scope !== 'all' ? estimatePk(pool, q) : null;
       const big = h('div', 'pkBig');
       if (r) {
-        big.append(h('b', '', Math.round(r.pk * 100) + '%'), h('span', '', 'chance of a kill · ' + r.n + ' similar shots from ' + r.pool + ' · 90% range ' + Math.round(r.lo * 100) + '–' + Math.round(r.hi * 100) + '%'));
-      } else big.append(h('b', '', '—'), h('span', '', 'too few similar shots'));
+        big.append(h('b', '', Math.round(r.pk * 100) + '%'), h('span', '', 'chance of a kill · ' + r.n + ' similar shots from ' + r.pool + ' · 90% range ' + Math.round(r.lo * 100) + '–' + Math.round(r.hi * 100) + '%' + (rAll ? ' · everyone: ' + Math.round(rAll.pk * 100) + '%' : '')));
+      } else big.append(h('b', '', '—'), h('span', '', scope === 'all' ? 'too few similar shots' : 'too few similar shots of your own (8 needed)' + (rAll ? ' · everyone: ' + Math.round(rAll.pk * 100) + '%' : '')));
       out.appendChild(big);
       const ph = physFor(undefined, st.model);
       if (ph) {

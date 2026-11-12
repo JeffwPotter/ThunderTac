@@ -9,7 +9,7 @@ function el(tag: string, cls = '', text = ''): HTMLElement { const e = document.
 const hex = (n: number) => '#' + n.toString(16).padStart(6, '0');
 
 const DEFAULTS: Settings = {
-  me: 'spurzz', units: 'metric', labels: 'all', lblName: true, lblType: true, lblAlt: true, lblSpeed: false, missileLabels: true,
+  me: 'spurzz', wingmen: '', pkScope: 'all', units: 'metric', labels: 'all', lblName: true, lblType: true, lblAlt: true, lblSpeed: false, missileLabels: true,
   acTrail: 30, msTrail: -1, missiles: true, cms: true, bombs: true, ground: true, ai: true, dead: false, sticks: true,
   radar: 'focus', desig: 'focus', seeker: true, msKeep: 'focus', view: '3d', scanZone: true, airfields: true, areas: false, trailStyle: 'ribbon', lineWidth: 2, vector: false, dlz: true, shade: true, grid: true,
 };
@@ -461,6 +461,8 @@ function bindTop() {
     viewer.restyle(); buildPlayers(); buildEvents(); drawStrip();
     library.reset(); debrief.invalidate();
   };
+  const wm = $('wingmen') as HTMLInputElement; wm.value = settings.wingmen || '';
+  wm.onchange = () => { settings.wingmen = wm.value.trim(); save(); library.reset(); debrief.invalidate(); };
   $('btnAll').onclick = () => { if (!ses) return; for (const p of ses.players) p.hidden = false; viewer.restyle(); buildPlayers(); };
   $('btnInvolved').onclick = () => { if (!ses) return; const keep = involvedWithMe(); if (!keep.size) return; for (const p of ses.players) p.hidden = !keep.has(p.slot); viewer.restyle(); buildPlayers(); };
   ($('evMine') as HTMLInputElement).onchange = buildEvents; ($('evKind') as HTMLSelectElement).onchange = buildEvents;
@@ -513,7 +515,7 @@ const debrief = new Debrief($('debrief'), {
   },
 });
 const library = new Library($('library'), {
-  settings,
+  settings, saveSettings: () => save(),
   close: () => showPage(''),
   openMatch: async (id: string) => { showPage(''); const s = $('session') as HTMLSelectElement; if (s.value !== id) { s.value = id; await open(id); } },
 });

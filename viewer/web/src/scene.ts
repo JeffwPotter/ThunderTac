@@ -8,6 +8,8 @@ import { envelope, physFor, Phys } from './envelope';
 
 export interface Settings {
   me: string;
+  wingmen: string;            // comma-separated player names flown with (for 'me + wingman' Pk)
+  pkScope: 'all' | 'self' | 'squad';
   units: 'metric' | 'aviation';
   labels: 'all' | 'focus' | 'off';
   lblName: boolean; lblType: boolean; lblAlt: boolean; lblSpeed: boolean;
