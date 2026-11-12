@@ -1,0 +1,470 @@
+/*
+	wrpl: War Thunder replay parsing library (golang)
+	Copyright (C) 2025 flexcoral
+
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the GNU Affero General Public License as published
+	by the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU Affero General Public License for more details.
+
+	You should have received a copy of the GNU Affero General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+package packetecs2
+
+import (
+	"encoding/binary"
+	"fmt"
+
+	"github.com/maxsupermanhd/wrpl-inspector/v3/wrpl/danet"
+	"github.com/maxsupermanhd/wrpl-inspector/v3/wrpl/packet"
+
+	"github.com/pierrec/lz4/v4"
+)
+
+// ID_CONNECTION_REQUEST_ACCEPTED = 0x11
+// ID_DISCONNECT = 0x13
+// ID_ENTITY_MSG = 0x20
+// ID_ENTITY_MSG_COMPRESSED = 0x21
+// ID_ENTITY_REPLICATION = 0x22
+// ID_ENTITY_REPLICATION_COMPRESSED = 0x23
+// ID_ENTITY_CREATION = 0x24
+// ID_ENTITY_CREATION_COMPRESSED = 0x25
+// ID_ENTITY_DESTRUCTION = 0x26
+// IS_COMPRESSED = [ID_ENTITY_MSG_COMPRESSED, ID_ENTITY_REPLICATION_COMPRESSED, ID_ENTITY_CREATION_COMPRESSED]
+
+type Message struct {
+	EID      uint64
+	Template TemplateIdx
+	Data     []byte
+	Parsed   []any
+	// OURS: true once the whole length-prefixed block was read from the packet.
+	BlockRead bool
+}
+
+type ParsedPacketECS struct {
+	PacketSeq        uint64
+	PacketTime       uint32
+	Control          byte
+	WasCompressed    bool
+	DecompressFailed bool
+	DecompressError  string
+	DecompressSize   int
+	MessageCount     byte
+	Messages         []*Message
+}
+
+type TemplateIdx uint16
+type ComponentIdx uint16
+
+type Template struct {
+	ID         TemplateIdx
+	Name       string
+	Components []ComponentIdx
+}
+
+type HashedComponent struct {
+	Name DataComponentHash
+	Type ComponentHash
+}
+
+type PacketECSParser struct {
+	// Replays from 0x00018C1C insert a reserved zero byte between the template
+	// definition/reference and construction component count. Opt in explicitly
+	// so older replays keep their original wire layout.
+	ConstructionReservedByte bool
+	// AllowMissingPODDataComponents lets a caller tolerate additional data
+	// components that are absent from ecshashes when their component type is a
+	// fixed-width POD. The bytes are retained as OpaqueDataComponent. This is
+	// opt-in because the default model should keep rejecting unknown layouts.
+	AllowMissingPODDataComponents bool
+	// OURS: counters for constructions that were skipped because their
+	// content could not be interpreted. Used by the decoder's self-checks.
+	SkippedConstructions int
+	ParsedConstructions  int
+	SkipReasons          map[string]int
+	SkipExamples         map[string]string
+	TemplateDefs         map[TemplateIdx]*Template
+	ComponentDefs        map[ComponentIdx]*HashedComponent
+	Messages             []ParsedPacketECS
+	InternedStrings      map[uint16]string
+	Mgr                  EntityManager
+	Maps                 ComponentHashMaps
+	componentParseDepth  int
+}
+
+func NewPacketECSParser(m ComponentHashMaps) *PacketECSParser { // I removed parsers because that data will not change across iterations, so no need to reload it
+	return &PacketECSParser{
+		TemplateDefs:    map[TemplateIdx]*Template{},
+		ComponentDefs:   map[ComponentIdx]*HashedComponent{},
+		Messages:        []ParsedPacketECS{},
+		InternedStrings: map[uint16]string{},
+		Mgr: EntityManager{
+			Entities:   map[uint32]*Entity{},
+			Uid_lookup: map[int32]*Entity{},
+		},
+		Maps: m,
+	}
+}
+
+func (p *PacketECSParser) GetPacketStreams() []packet.ParsedPacketStream {
+	ret := []packet.ParsedPacket{}
+	for _, v := range p.Messages {
+		for _, v2 := range v.Messages {
+			ret = append(ret, packet.ParsedPacket{
+				Packet: packet.Packet{
+					Seq:           v.PacketSeq,
+					CurrentTime:   v.PacketTime,
+					PacketType:    0,
+					PacketPayload: v2.Data,
+				},
+				ParsersResults: []packet.ParserResult{{
+					Parser: "ecs",
+					Err:    nil,
+					Data:   v2,
+				}},
+			})
+		}
+	}
+
+	return []packet.ParsedPacketStream{
+		{
+			Name:    "ECS messages",
+			Packets: ret,
+		},
+	}
+}
+
+func (p *PacketECSParser) Name() string {
+	return "ecs"
+}
+
+func (p *PacketECSParser) ParsesMatching() map[byte][][]packet.ParsingCondition {
+
+	return map[byte][][]packet.ParsingCondition{
+		6: nil,
+	}
+}
+
+func (p *PacketECSParser) ParseECSTemplate(r *danet.BitReader) (*Template, error) {
+	templID, err := r.ReadCompressed()
+	if err != nil {
+		return nil, fmt.Errorf("reading template id: %w", err)
+	}
+	templDef, ok := p.TemplateDefs[TemplateIdx(templID)]
+	if ok {
+		return templDef, nil
+	}
+	templDef = &Template{
+		ID: TemplateIdx(templID),
+	}
+	tname, err := r.ReadLenStr()
+	if err != nil {
+		return nil, fmt.Errorf("reading template name: %w", err)
+	}
+	templDef.Name = tname
+	var numComponents uint16
+	err = binary.Read(r, binary.LittleEndian, &numComponents)
+	if err != nil {
+		return nil, fmt.Errorf("reading num components: %w", err)
+	}
+	componentCount, err := ecsCheckListCount(r, "template component", uint64(numComponents), 8)
+	if err != nil {
+		return nil, fmt.Errorf("reading num components: %w", err)
+	}
+	for i := 0; i < componentCount; i++ {
+		compIDl, err := r.ReadCompressed()
+		if err != nil {
+			return nil, fmt.Errorf("reading component id: %w", err)
+		}
+		compID := ComponentIdx(compIDl)
+		_, ok := p.ComponentDefs[compID]
+		if !ok {
+			comp := &HashedComponent{}
+			err = binary.Read(r, binary.LittleEndian, &comp.Name)
+			if err != nil {
+				return nil, fmt.Errorf("reading component def name hash: %w", err)
+			}
+			err = binary.Read(r, binary.LittleEndian, &comp.Type)
+			if err != nil {
+				return nil, fmt.Errorf("reading component def type hash: %w", err)
+			}
+			p.ComponentDefs[compID] = comp
+		}
+		templDef.Components = append(templDef.Components, compID)
+	}
+	p.TemplateDefs[TemplateIdx(templID)] = templDef
+	return templDef, nil
+}
+
+func (p *PacketECSParser) deserializeConstruction(r *danet.BitReader, templ *Template) (ret *Entity, err error) {
+	templateComponentsCount := uint16(len(templ.Components))
+	var compCount uint64
+	if templateComponentsCount < 256 {
+		temp, err := r.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		compCount = uint64(temp)
+	} else {
+		compCount, err = readECSCompressed(r)
+		if err != nil {
+			return nil, err
+		}
+	}
+	componentCount, err := ecsCheckListCount(r, "construction component", compCount, 8)
+	if err != nil {
+		return nil, err
+	}
+	var comp uint16
+	comp = 0
+	var Payload Entity
+	Payload.Template = templ.Name
+	for i := 0; i < componentCount; i++ {
+		var ofs uint64 // actualy uint16
+		if templateComponentsCount < 256 {
+			temp, err := r.ReadByte()
+			if err != nil {
+				return nil, err
+			}
+			ofs = uint64(temp)
+		} else {
+			ofs, err = r.ReadCompressed()
+			if err != nil {
+				return nil, err
+			}
+		}
+		if i == 0 {
+			comp = uint16(ofs)
+		} else {
+			comp = comp + uint16(ofs) + 1
+		}
+		if comp >= templateComponentsCount {
+			err = fmt.Errorf("invalid template component index %d for template local idx %d<%s> (count %d)", comp, templ.ID, templ.Name, templateComponentsCount)
+			return nil, err
+		}
+		if comp >= uint16(len(templ.Components)) {
+			return nil, fmt.Errorf("template components idx out of bounds (%d comp, %d len)", comp, len(templ.Components))
+		}
+		idx := templ.Components[comp]
+		c, good := p.ComponentDefs[idx]
+		// dataname, _ := g_ecs_data.GetDataCompName(c.Name)
+		// types, _ := g_ecs_data.GetCompName(c.Type)
+		if !good {
+			return nil, fmt.Errorf("invalid index into ComponentDefs of %d", idx)
+		}
+		component, err := deserialize_init_component_typeless(r, p, c.Type, c.Name)
+		if err != nil {
+			return nil, err
+		}
+		name, good := p.Maps.GetDataCompName(c.Name)
+		if !good {
+			if !p.AllowMissingPODDataComponents {
+				return nil, fmt.Errorf("unkown Datatype of name %d", c.Name)
+			}
+			name = fmt.Sprintf("missing_data_0x%08x", uint32(c.Name))
+		}
+		Payload.Data.AddComponent(component, name)
+	}
+	return &Payload, nil
+}
+
+func (p *PacketECSParser) ParseECSConstructMessage(r *danet.BitReader) (ret *Message, err error) {
+	ret = &Message{}
+	ret.EID, err = packet.ReadEID(r)
+	if err != nil {
+		return ret, fmt.Errorf("reading eid: %w", err)
+	}
+	blockSize, err := readECSCompressed(r)
+	if err != nil {
+		return ret, fmt.Errorf("reading compressed block size: %w", err)
+	}
+	blockBytes, err := ecsCheckByteBlock(r, "construction block", blockSize)
+	if err != nil {
+		return ret, fmt.Errorf("reading compressed block size: %w", err)
+	}
+	ret.Data = make([]byte, blockBytes)
+	_, err = r.Read(ret.Data)
+	if err != nil {
+		return ret, fmt.Errorf("reading block (size %d): %w", blockSize, err)
+	}
+	ret.BlockRead = true
+	br := danet.NewBitReader(ret.Data)
+	templ, err := p.ParseECSTemplate(br)
+	if err != nil {
+		return ret, fmt.Errorf("reading template: %w", err)
+	}
+	ret.Template = templ.ID
+	if p.ConstructionReservedByte {
+		reserved, readErr := br.ReadByte()
+		if readErr != nil {
+			return ret, fmt.Errorf("reading construction reserved byte: %w", readErr)
+		}
+		if reserved != 0 {
+			return ret, fmt.Errorf("unsupported construction reserved byte: 0x%02x", reserved)
+		}
+	}
+	entitiy, err := p.deserializeConstruction(br, templ)
+	if err != nil {
+		return ret, fmt.Errorf("parsing entity: %w", err)
+	}
+	eid := EntityID(ret.EID)
+	p.Mgr.AddEntity(eid, entitiy)
+	ret.Parsed = append(ret.Parsed, entitiy)
+	return
+}
+
+func (p *PacketECSParser) Parse(pk *packet.Packet) (any, error) {
+	dat := &ParsedPacketECS{
+		PacketSeq:  pk.Seq,
+		PacketTime: pk.CurrentTime,
+	}
+	var err error
+	r := danet.NewBitReader(pk.PacketPayload)
+	dat.Control, err = r.ReadByte()
+	if err != nil {
+		return nil, fmt.Errorf("reading ecs control byte: %w", err)
+	}
+
+	if dat.Control == 0x25 {
+		decompSize, err := ecsLimitedLZ4BufferSize(len(pk.PacketPayload) - 1)
+		if err != nil {
+			return nil, fmt.Errorf("sizing compressed ecs output: %w", err)
+		}
+		decomp := make([]byte, decompSize)
+		dat.DecompressSize, err = lz4.UncompressBlock(pk.PacketPayload[1:], decomp)
+		if err != nil {
+			dat.DecompressFailed = true
+			dat.DecompressError = err.Error()
+			dat.Messages = []*Message{{
+				Data: pk.PacketPayload[1:],
+			}}
+			return nil, fmt.Errorf("reading compressed ecs blob: %w", err)
+		}
+		r = danet.NewBitReader(decomp[:dat.DecompressSize])
+		dat.Control = 0x24
+	}
+	if dat.Control == 0x24 {
+		dat.MessageCount, err = r.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		messageLoopCount, err := ecsCheckListCount(r, "construction message", uint64(dat.MessageCount)+1, 24)
+		if err != nil {
+			return nil, err
+		}
+		for i := 0; i < messageLoopCount; i++ {
+			msg, err := p.ParseECSConstructMessage(r)
+			if err != nil {
+				// OURS (not upstream): each construction sits in its own
+				// length-prefixed block. When the block itself was read in
+				// full, a record we cannot interpret (for example a component
+				// type added by a newer game version) must not discard the
+				// other records in the packet. Count it and carry on.
+				if msg != nil && msg.BlockRead {
+					p.SkippedConstructions++
+					if p.SkipReasons == nil {
+						p.SkipReasons = map[string]int{}
+					}
+					reason := ecsSkipReason(err)
+					p.SkipReasons[reason]++
+					if p.SkipExamples == nil {
+						p.SkipExamples = map[string]string{}
+					}
+					if _, seen := p.SkipExamples[reason]; !seen {
+						p.SkipExamples[reason] = err.Error()
+					}
+					continue
+				}
+				return nil, fmt.Errorf("reading ecs construct message: %w", err)
+			}
+			p.ParsedConstructions++
+			dat.Messages = append(dat.Messages, msg)
+		}
+	}
+	p.Messages = append(p.Messages, *dat)
+	return dat, nil
+}
+
+func deserialize_init_component_typeless(r *danet.BitReader, mgr *PacketECSParser, comp_type ComponentHash, datacomp_type DataComponentHash) (ret *Component, err error) {
+	if comp_type == 0 {
+		return nil, nil
+	}
+	if mgr.componentParseDepth >= ecsMaxComponentNesting {
+		return nil, fmt.Errorf("ECS component nesting exceeds maximum depth %d at bit offset %d (data length %d bytes)", ecsMaxComponentNesting, r.BitOffset, len(r.Data))
+	}
+	mgr.componentParseDepth++
+	defer func() {
+		mgr.componentParseDepth--
+	}()
+	var serializer ComponentParser
+	if datacomp_type != 0 { // if we have a datacomp, use that, else use the component serializer
+		serializer, _ = mgr.Maps.DataComponentParsers[datacomp_type]
+	} else {
+		serializer, _ = mgr.Maps.ComponentParsers[comp_type]
+	}
+	if serializer == nil {
+		if mgr.AllowMissingPODDataComponents && datacomp_type != 0 {
+			_, knownDataComponent := mgr.Maps.DataComponents[uint32(datacomp_type)]
+			if !knownDataComponent {
+				if size, ok := fixedPODComponentBits(mgr.Maps, comp_type); ok {
+					raw, readErr := r.ReadBits(size)
+					if readErr != nil {
+						return nil, readErr
+					}
+					return &Component{
+						Value: OpaqueDataComponent{Type: comp_type, Raw: append([]byte(nil), raw...)},
+						Type:  comp_type,
+					}, nil
+				}
+			}
+		}
+		return nil, fmt.Errorf("serializer not found for datacomponent %s<%d>", mgr.Maps.DataComponents[uint32(datacomp_type)].Name, comp_type)
+	}
+	raw, err := serializer.Parse(r, mgr)
+	if err != nil {
+		return nil, err
+	}
+	var comp Component
+	comp.Value = raw
+	comp.Type = comp_type
+	return &comp, nil
+}
+
+func deserialize_child_component(r *danet.BitReader, mgr *PacketECSParser) (ret *Component, err error) {
+	type_id, err := r.ReadU32LE()
+	if err != nil {
+		return nil, err
+	}
+	ret, err = deserialize_init_component_typeless(r, mgr, ComponentHash(type_id), 0)
+	return ret, err
+}
+
+// ecsSkipReason shortens an error to a stable key: digits are replaced so the
+// same kind of failure groups together.
+func ecsSkipReason(err error) string {
+	msg := err.Error()
+	out := make([]rune, 0, len(msg))
+	lastDigit := false
+	for _, r := range msg {
+		if r >= '0' && r <= '9' {
+			if !lastDigit {
+				out = append(out, 'N')
+			}
+			lastDigit = true
+			continue
+		}
+		lastDigit = false
+		out = append(out, r)
+	}
+	if len(out) > 140 {
+		out = out[:140]
+	}
+	return string(out)
+}

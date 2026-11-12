@@ -1,0 +1,15 @@
+# build output
+bin/
+*.exe
+*.zip
+
+# replays and generated data
+*.wrpl
+*.wtr
+library/
+backups/
+
+# misc
+node_modules/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,99 @@
+{
+  "checks": [
+    {
+      "id": "version",
+      "name": "Replay format version is one this decoder was verified on",
+      "status": "pass",
+      "value": "101404",
+      "expected": "verified 2026-11-11 on four Air RB server replays"
+    },
+    {
+      "id": "shards",
+      "name": "All replay pieces present",
+      "status": "pass",
+      "value": "10 pieces",
+      "expected": "contiguous, with end marker"
+    },
+    {
+      "id": "results",
+      "name": "Results table decoded",
+      "status": "pass",
+      "value": "32 players",
+      "expected": "one row per player"
+    },
+    {
+      "id": "players_units",
+      "name": "Every player in the results has a decoded vehicle",
+      "status": "pass",
+      "value": "32 of 32",
+      "expected": "all"
+    },
+    {
+      "id": "kills_vs_results",
+      "name": "Decoded player shoot-downs equal deaths in the results table",
+      "status": "pass",
+      "value": "26 decoded, 26 in results",
+      "expected": "equal"
+    },
+    {
+      "id": "aircraft_rate",
+      "name": "Aircraft positions arrive at a steady rate",
+      "status": "pass",
+      "value": "median 246 ms between samples",
+      "expected": "100–600 ms"
+    },
+    {
+      "id": "heading_vs_course",
+      "name": "Aircraft heading agrees with direction of travel",
+      "status": "pass",
+      "value": "median difference 0.6° over 7610 samples",
+      "expected": "under 5°"
+    },
+    {
+      "id": "missile_launch",
+      "name": "Missiles start at their launching aircraft",
+      "status": "pass",
+      "value": "median 10 m over 145 missiles",
+      "expected": "median under 150 m"
+    },
+    {
+      "id": "missile_kills",
+      "name": "Missile kills line up with a missile reaching the victim",
+      "status": "pass",
+      "value": "24 of 27",
+      "expected": "at least 60%"
+    },
+    {
+      "id": "radar",
+      "name": "Radar state decoded for player aircraft",
+      "status": "pass",
+      "value": "34 of 34 player aircraft",
+      "expected": "at least half (not every aircraft has a radar)"
+    },
+    {
+      "id": "entity_records",
+      "name": "Game-object records read without skipping",
+      "status": "warn",
+      "value": "3153 read, 3 skipped",
+      "expected": "none skipped",
+      "hint": "Unreadable records were skipped, not fatal. Usually a component type added by a newer game version: add it to data/ecshashes.json or a parser in wrpl/packet/parser/ecs2/Parsers.go. Kinds: 1× parsing entity: EOF | 1× parsing entity: serializer not found for datacomponent \u003c20938752\u003e | 1× unsupported construction reserved byte: 0x77"
+    },
+    {
+      "id": "underground",
+      "name": "No aircraft flies underground",
+      "status": "pass",
+      "value": "0 of 40124 samples (deepest 0 m)",
+      "expected": "0 samples more than 50 m below the terrain"
+    }
+  ],
+  "counts": {
+    "aircraft": 46,
+    "bomb": 84,
+    "countermeasure": 1838,
+    "ground": 119,
+    "groundImpacts": 0,
+    "missile": 145
+  },
+  "replayVersion": 101404,
+  "session": "2b315cb7002e4666"
+}

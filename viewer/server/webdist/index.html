@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>War Thunder Replay Viewer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="fetchBox" hidden>
+  <div class="fbInner">
+    <div class="fbTitle">Add a match by session ID</div>
+    <div class="fbHelp">Paste the session ID, or the link to the match's replay page on warthunder.com. Both the long number from the replay page and the 16-character ID work.</div>
+    <input id="fetchId" spellcheck="false" placeholder="e.g. 388274178955586308 or 2b315cb7002e4238">
+    <div id="fetchMsg"></div>
+    <div class="fbButtons"><button id="fetchGo" class="on">Download and convert</button><button id="fetchClose">Close</button></div>
+  </div>
+</div>
+<header id="top">
+  <div class="brand">WT Replay Viewer</div>
+  <select id="session" title="Match"></select>
+  <button id="btnFetch" title="Download a match from the War Thunder replay server by its session ID">+ Add match</button>
+  <div id="matchInfo"></div>
+  <div class="spacer"></div>
+  <div class="group"><button id="btnDebrief" title="Your mistakes, shots and defence in this match">Debrief</button><button id="btnLibrary" title="All your matches: trends, Pk, heatmaps">Library</button></div>
+  <div class="group seg"><button id="btn3d" class="on" title="3D view (3)">3D</button><button id="btn2d" title="2D map (2)">2D map</button></div>
+  <div class="group">
+    <button id="btnHome" title="Whole battle (H)">Home</button>
+    <button id="btnTop" title="Look straight down (T)">Top</button>
+    <button id="btnFollow" title="Follow the selected unit (F)">Follow</button>
+    <button id="btnMe" title="Select and follow my aircraft (M)">Me</button>
+  </div>
+  <div class="group">
+    <label>Units <select id="units"><option value="metric">km/h, m</option><option value="aviation">kt, ft</option></select></label>
+    <label>Me <input id="me" size="10" spellcheck="false"></label>
+  </div>
+  <div id="compass" title="North"><div id="needle">N</div></div>
+</header>
+<aside id="left">
+  <div class="panelHead">Players
+    <span class="right"><button id="btnAll" title="Show every player">All</button><button id="btnInvolved" title="Only me and players I fought">Me + involved</button></span>
+  </div>
+  <div id="players"></div>
+</aside>
+<main id="view">
+  <div id="canvasHost"></div>
+  <div id="labels"></div>
+  <div id="measure" hidden></div>
+  <div id="tip" hidden></div>
+  <div id="scale" hidden><div id="scaleBar"></div><span id="scaleTxt"></span></div>
+  <div id="hint"></div>
+  <div id="loading"><div id="loadingText">Loading…</div></div>
+</main>
+<aside id="right">
+  <div class="tabs"><button data-tab="display" class="on">Display</button><button data-tab="selected">Selected</button><button data-tab="events">Events</button></div>
+  <div class="tab" id="tab-display">
+    <h4>Labels</h4>
+    <label class="row">Aircraft labels <select data-set="labels"><option value="all">All</option><option value="focus">Highlighted only</option><option value="off">Off</option></select></label>
+    <label class="chk"><input type="checkbox" data-set="lblName"> Player name</label>
+    <label class="chk"><input type="checkbox" data-set="lblType"> Aircraft type</label>
+    <label class="chk"><input type="checkbox" data-set="lblAlt"> Altitude</label>
+    <label class="chk"><input type="checkbox" data-set="lblSpeed"> Speed</label>
+    <label class="chk"><input type="checkbox" data-set="missileLabels"> Missile names</label>
+    <h4>Trails</h4>
+    <label class="row">Style <select data-set="trailStyle"><option value="ribbon">Ribbon (shows roll)</option><option value="line">Line</option></select></label>
+    <label class="row">Line width <select data-set="lineWidth" data-num="1"><option value="1">Thin</option><option value="2">Normal</option><option value="3">Thick</option><option value="4">Extra thick</option></select></label>
+    <label class="row">Aircraft <select data-set="acTrail" data-num="1"><option value="0">Off</option><option value="10">10 s tail</option><option value="30">30 s tail</option><option value="60">60 s tail</option><option value="120">2 min tail</option><option value="-1">Whole path</option></select></label>
+    <label class="row">Missiles <select data-set="msTrail" data-num="1"><option value="0">Off</option><option value="5">5 s tail</option><option value="15">15 s tail</option><option value="-1">Whole path</option></select></label>
+    <label class="row">Finished missile paths <select data-set="msKeep"><option value="all">Keep all</option><option value="focus">Keep highlighted</option><option value="off">Remove</option></select></label>
+    <h4>Weapons</h4>
+    <label class="chk"><input type="checkbox" data-set="missiles"> Missiles</label>
+    <label class="chk"><input type="checkbox" data-set="seeker"> Missile seeker lock lines</label>
+    <label class="chk"><input type="checkbox" data-set="cms"> Flares and chaff</label>
+    <label class="chk"><input type="checkbox" data-set="bombs"> Bombs</label>
+    <h4>Radar</h4>
+    <label class="row">Radar beams <select data-set="radar"><option value="all">All</option><option value="focus">Highlighted only</option><option value="off">Off</option></select></label>
+    <label class="chk"><input type="checkbox" data-set="scanZone"> Radar scan zone (from game data)</label>
+    <label class="row">Lock lines <select data-set="desig"><option value="all">All</option><option value="focus">Highlighted only</option><option value="off">Off</option></select></label>
+    <h4>Units</h4>
+    <label class="chk"><input type="checkbox" data-set="ai"> AI aircraft</label>
+    <label class="chk"><input type="checkbox" data-set="ground"> Ground units</label>
+    <label class="chk"><input type="checkbox" data-set="dead"> Destroyed aircraft (marker and path)</label>
+    <label class="chk"><input type="checkbox" data-set="sticks"> Altitude lines to ground</label>
+    <label class="chk"><input type="checkbox" data-set="vector"> Speed vector (10 s ahead)</label>
+    <label class="chk"><input type="checkbox" data-set="dlz"> Launch-zone rings for the selected aircraft</label>
+    <h4>Map</h4>
+    <label class="chk"><input type="checkbox" data-set="airfields"> Airfields</label>
+    <label class="chk"><input type="checkbox" data-set="areas"> Mission areas (border, airfield zones)</label>
+    <label class="chk"><input type="checkbox" data-set="shade"> Hill shading</label>
+    <label class="chk"><input type="checkbox" data-set="grid"> 10 km grid</label>
+    <div class="legend">
+      <span><i style="background:#ffe14d"></i>Me</span><span><i style="background:#4da3ff"></i>My team</span><span><i style="background:#ff6a3d"></i>Enemy</span><span><i style="background:#a8b0bc"></i>AI / neutral</span>
+      <span><i style="background:#ffd24a" class="dot"></i>Flare</span><span><i style="background:#d5dde6" class="dot"></i>Chaff</span>
+    </div>
+  </div>
+  <div class="tab" id="tab-selected" hidden><div id="selBody" class="muted">Click an aircraft or a missile.</div></div>
+  <div class="tab" id="tab-events" hidden>
+    <label class="row">Show <select id="evKind"><option value="kills">Shoot-downs</option><option value="shots">Missile shots</option></select></label>
+    <label class="chk"><input type="checkbox" id="evMine"> Only mine (by me or at me)</label>
+    <div id="events"></div>
+  </div>
+</aside>
+<section id="debrief" class="page" hidden></section>
+<section id="library" class="page" hidden></section>
+<footer id="bar">
+  <button id="play" title="Play / pause (Space)">▶</button>
+  <select id="speed" title="Playback speed"></select>
+  <div id="clock">0:00</div>
+  <div id="scrubWrap"><canvas id="strip"></canvas></div>
+  <div id="dur">0:00</div>
+</footer>
+<script src="app.js"></script>
+</body>
+</html>

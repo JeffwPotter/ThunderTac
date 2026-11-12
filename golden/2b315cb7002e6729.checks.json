@@ -1,0 +1,98 @@
+{
+  "checks": [
+    {
+      "id": "version",
+      "name": "Replay format version is one this decoder was verified on",
+      "status": "pass",
+      "value": "101404",
+      "expected": "verified 2026-11-11 on four Air RB server replays"
+    },
+    {
+      "id": "shards",
+      "name": "All replay pieces present",
+      "status": "pass",
+      "value": "10 pieces",
+      "expected": "contiguous, with end marker"
+    },
+    {
+      "id": "results",
+      "name": "Results table decoded",
+      "status": "pass",
+      "value": "32 players",
+      "expected": "one row per player"
+    },
+    {
+      "id": "players_units",
+      "name": "Every player in the results has a decoded vehicle",
+      "status": "pass",
+      "value": "32 of 32",
+      "expected": "all"
+    },
+    {
+      "id": "kills_vs_results",
+      "name": "Decoded player shoot-downs equal deaths in the results table",
+      "status": "pass",
+      "value": "30 decoded, 30 in results",
+      "expected": "equal"
+    },
+    {
+      "id": "aircraft_rate",
+      "name": "Aircraft positions arrive at a steady rate",
+      "status": "pass",
+      "value": "median 246 ms between samples",
+      "expected": "100–600 ms"
+    },
+    {
+      "id": "heading_vs_course",
+      "name": "Aircraft heading agrees with direction of travel",
+      "status": "pass",
+      "value": "median difference 0.7° over 6760 samples",
+      "expected": "under 5°"
+    },
+    {
+      "id": "missile_launch",
+      "name": "Missiles start at their launching aircraft",
+      "status": "pass",
+      "value": "median 11 m over 121 missiles",
+      "expected": "median under 150 m"
+    },
+    {
+      "id": "missile_kills",
+      "name": "Missile kills line up with a missile reaching the victim",
+      "status": "pass",
+      "value": "21 of 24",
+      "expected": "at least 60%"
+    },
+    {
+      "id": "radar",
+      "name": "Radar state decoded for player aircraft",
+      "status": "pass",
+      "value": "33 of 33 player aircraft",
+      "expected": "at least half (not every aircraft has a radar)"
+    },
+    {
+      "id": "entity_records",
+      "name": "Game-object records read without skipping",
+      "status": "pass",
+      "value": "3015 read, 0 skipped",
+      "expected": "none skipped"
+    },
+    {
+      "id": "underground",
+      "name": "No aircraft flies underground",
+      "status": "pass",
+      "value": "0 of 37367 samples (deepest 0 m)",
+      "expected": "0 samples more than 50 m below the terrain"
+    }
+  ],
+  "counts": {
+    "aircraft": 45,
+    "bomb": 74,
+    "countermeasure": 1494,
+    "ground": 193,
+    "groundImpacts": 2,
+    "missile": 121
+  },
+  "replayVersion": 101404,
+  "session": "2b315cb7002e6729"
+}

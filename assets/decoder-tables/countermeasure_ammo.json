@@ -1,0 +1,208 @@
+{
+  "schema": 1,
+  "commit": "146ce6b5c2ea36cf6739f2f0381c3da7a6d4e38e",
+  "launchers": {
+    "countermeasure_chaff_only": {
+      "bullet": "Chaff"
+    },
+    "countermeasure_chaff_only_large": {
+      "bullet": "Chaff"
+    },
+    "countermeasure_chaff_only_large_a32a": {
+      "bullet": "Chaff"
+    },
+    "countermeasure_large_split_launcher_jet": {
+      "bullet": "Flare",
+      "countermeasures_launcher_chaff_large": "Chaff"
+    },
+    "countermeasure_large_split_launcher_jet_maw": {
+      "bullet": "Flare",
+      "maw_countermeasures_launcher_chaff_large": "Chaff"
+    },
+    "countermeasure_large_split_launcher_jet_with_chaff": {},
+    "countermeasure_split_large_launcher_jet_add_pod": {
+      "bullet": "Flare",
+      "countermeasures_launcher_chaff_large_add_pod": "Chaff"
+    },
+    "countermeasure_split_large_launcher_jet_maw": {
+      "bullet": "Flare",
+      "maw_countermeasures_launcher_chaff_large": "Chaff"
+    },
+    "countermeasure_split_launcher_am_23": {
+      "bullet": "Flare",
+      "countermeasures_launcher_chaff": "Chaff"
+    },
+    "countermeasure_split_launcher_fn_hmp400_lcc": {
+      "bullet": "Flare",
+      "fn_hmp400_lcc_launcher_chaff": "Chaff"
+    },
+    "countermeasure_split_launcher_jet": {
+      "bullet": "Flare",
+      "countermeasures_launcher_chaff": "Chaff"
+    },
+    "countermeasure_split_launcher_jet_add_pod": {
+      "bullet": "Flare",
+      "countermeasures_launcher_chaff_add_pod": "Chaff"
+    },
+    "countermeasure_split_launcher_jet_bol": {
+      "bullet": "Flare",
+      "countermeasures_launcher_chaff_bol_pod": "Chaff"
+    },
+    "countermeasure_split_launcher_jet_bol_pod": {
+      "bullet": "Flare",
+      "countermeasures_launcher_chaff_bol_pod": "Chaff"
+    },
+    "countermeasure_split_launcher_jet_bol_pod_aim9l": {
+      "bullet": "Flare",
+      "countermeasures_launcher_chaff": "Chaff"
+    },
+    "countermeasure_split_launcher_jet_bol_pod_aim9m": {
+      "bullet": "Flare",
+      "countermeasures_launcher_chaff": "Chaff"
+    },
+    "countermeasure_split_launcher_jet_maw": {
+      "bullet": "Flare",
+      "maw_countermeasures_launcher_chaff": "Chaff"
+    },
+    "countermeasure_split_launcher_jet_maw_bol_pod": {
+      "bullet": "Flare",
+      "maw_countermeasures_launcher_chaff": "Chaff"
+    },
+    "countermeasure_split_launcher_jet_only_chaff_large": {
+      "bullet": "Chaff"
+    },
+    "countermeasure_split_launcher_jet_only_flare_large": {
+      "bullet": "Flare"
+    },
+    "countermeasure_split_launcher_jet_pids": {
+      "bullet": "Flare",
+      "countermeasures_launcher_chaff": "Chaff"
+    },
+    "countermeasure_split_launcher_jet_with_chaff": {}
+  },
+  "provenance": {
+    "builder": "wtassets tables (from tools/countermeasures/build_catalog.py)",
+    "classification": "Outer bulletType only: flr=Flare; chff=Chaff. Mixed or unknown entries omitted.",
+    "source": "Local install 2026-11-12",
+    "sources": {
+      "countermeasure_chaff_only": {
+        "bytes": 2241,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_chaff_only.blkx",
+        "sha1": "68dd8faaad9de5e022fad7c08cc7ed81fd5b5649"
+      },
+      "countermeasure_chaff_only_large": {
+        "bytes": 2237,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_chaff_only_large.blkx",
+        "sha1": "3fdb2282ed73c3111b9228a059cb924f46b80dbf"
+      },
+      "countermeasure_chaff_only_large_a32a": {
+        "bytes": 2239,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_chaff_only_large_a32a.blkx",
+        "sha1": "56a9abac9cd6ab75bc83bfaca1522ac32112e626"
+      },
+      "countermeasure_large_split_launcher_jet": {
+        "bytes": 10283,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_large_split_launcher_jet.blkx",
+        "sha1": "e0adb989879c9e8a467e872ce12cca28e2a8222e"
+      },
+      "countermeasure_large_split_launcher_jet_maw": {
+        "bytes": 10287,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_large_split_launcher_jet_maw.blkx",
+        "sha1": "a69441dfdbe2e6e73f56272509ee4e0126dc0e15"
+      },
+      "countermeasure_large_split_launcher_jet_with_chaff": {
+        "bytes": 10235,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_large_split_launcher_jet_with_chaff.blkx",
+        "sha1": "a8d4f341c441d963559517bce5e82d31b2981fb4"
+      },
+      "countermeasure_split_large_launcher_jet_add_pod": {
+        "bytes": 10291,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_split_large_launcher_jet_add_pod.blkx",
+        "sha1": "0a916f0a2056b0c6c9074b2076fa2ce4260f6b6a"
+      },
+      "countermeasure_split_large_launcher_jet_maw": {
+        "bytes": 10287,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_split_large_launcher_jet_maw.blkx",
+        "sha1": "a69441dfdbe2e6e73f56272509ee4e0126dc0e15"
+      },
+      "countermeasure_split_launcher_am_23": {
+        "bytes": 10318,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_split_launcher_am_23.blkx",
+        "sha1": "f09bb07b255d56c7c7b86076011607d2a2d1497d"
+      },
+      "countermeasure_split_launcher_fn_hmp400_lcc": {
+        "bytes": 10285,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_split_launcher_fn_hmp400_lcc.blkx",
+        "sha1": "e9de435e9e47dcb56b26c77bcb3d005b54daf534"
+      },
+      "countermeasure_split_launcher_jet": {
+        "bytes": 10287,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_split_launcher_jet.blkx",
+        "sha1": "c195379abe33c56d214dc0b8d418b4bc6edc06fb"
+      },
+      "countermeasure_split_launcher_jet_add_pod": {
+        "bytes": 10245,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_split_launcher_jet_add_pod.blkx",
+        "sha1": "daf82108005e158faf7db48f693bd7aac4f0242a"
+      },
+      "countermeasure_split_launcher_jet_bol": {
+        "bytes": 10266,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_split_launcher_jet_bol.blkx",
+        "sha1": "e50157ea33458d313333107793d0accba5f37119"
+      },
+      "countermeasure_split_launcher_jet_bol_pod": {
+        "bytes": 10266,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_split_launcher_jet_bol_pod.blkx",
+        "sha1": "e50157ea33458d313333107793d0accba5f37119"
+      },
+      "countermeasure_split_launcher_jet_bol_pod_aim9l": {
+        "bytes": 10287,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_split_launcher_jet_bol_pod_aim9l.blkx",
+        "sha1": "c195379abe33c56d214dc0b8d418b4bc6edc06fb"
+      },
+      "countermeasure_split_launcher_jet_bol_pod_aim9m": {
+        "bytes": 10287,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_split_launcher_jet_bol_pod_aim9m.blkx",
+        "sha1": "c195379abe33c56d214dc0b8d418b4bc6edc06fb"
+      },
+      "countermeasure_split_launcher_jet_maw": {
+        "bytes": 10241,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_split_launcher_jet_maw.blkx",
+        "sha1": "e501c43b2570e61f7198b8bddb2423fd584808ce"
+      },
+      "countermeasure_split_launcher_jet_maw_bol_pod": {
+        "bytes": 10262,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_split_launcher_jet_maw_bol_pod.blkx",
+        "sha1": "a6b0718b08a9c53e4574e4a5683050e20eb05277"
+      },
+      "countermeasure_split_launcher_jet_only_chaff_large": {
+        "bytes": 2321,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_split_launcher_jet_only_chaff_large.blkx",
+        "sha1": "3a8a03a44336868a82581f47ae63d6b7fe5fde66"
+      },
+      "countermeasure_split_launcher_jet_only_flare_large": {
+        "bytes": 8419,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_split_launcher_jet_only_flare_large.blkx",
+        "sha1": "7503088d13089dbb698d9db3194cd5bca94ac9d9"
+      },
+      "countermeasure_split_launcher_jet_pids": {
+        "bytes": 10287,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_split_launcher_jet_pids.blkx",
+        "sha1": "c195379abe33c56d214dc0b8d418b4bc6edc06fb"
+      },
+      "countermeasure_split_launcher_jet_with_chaff": {
+        "bytes": 10245,
+        "path": "aces.vromfs.bin_u/gamedata/weapons/rocketguns/countermeasure_split_launcher_jet_with_chaff.blkx",
+        "sha1": "5d08c73be7b01f820ae92fc346caee4916bf44ef"
+      }
+    }
+  },
+  "unclassified": {
+    "countermeasure_large_split_launcher_jet_with_chaff": [
+      "bullet"
+    ],
+    "countermeasure_split_launcher_jet_with_chaff": [
+      "bullet"
+    ]
+  }
+}

@@ -1,0 +1,324 @@
+// Package groundmeta builds an independent UID-to-unit-model registry from
+// ECS construction metadata. It intentionally runs its own ECS parser so the
+// existing aircraft/weapon model is not changed by missing server components.
+package groundmeta
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/maxsupermanhd/wrpl-inspector/v3/wrpl/danet"
+	"github.com/maxsupermanhd/wrpl-inspector/v3/wrpl/packet"
+	ecs "github.com/maxsupermanhd/wrpl-inspector/v3/wrpl/packet/parser/ecs2"
+)
+
+const maxGroundUID = 1 << 11
+
+var groundStorageComponents = []string{
+	"unit_storage__tank",
+	"unit_storage__light_vehicle",
+	"unit_storage__fortification",
+	"unit_storage__ship",
+	"unit_storage__walker",
+	"unit_storage__infantry_troop",
+	"unit_storage__human",
+	"unit_storage__barrage_balloon",
+}
+
+// Info is the explicit metadata observed for one replay UID. RawModel is the
+// exact unit__className/model string; empty RawModel means the ground entity
+// was present but no model field could be decoded.
+type Info struct {
+	UID          uint16
+	EID          uint64
+	RawModel     string
+	ClassModel   string
+	StorageModel string
+	MissionName  string
+	Source       string
+	Kind         string
+
+	Team       *int32
+	TeamSource string
+	UnitType   *int32
+
+	Storage       string
+	ClassConflict bool
+	Conflict      bool
+	Entity        *ecs.Entity
+	// A copied translation with the actual construction timestamp; no rotation
+	// or position is inferred from a template declaration.
+	Position            *ecs.Point3
+	ConstructionTime    uint32
+	HasConstructionTime bool
+}
+
+// Parser is a packet.PacketParser for packet type 6. Models is keyed by the
+// real replay unit UID, not by ECS entity index or a synthetic key.
+type Parser struct {
+	Models map[uint64]Info
+	All    []Info
+	Ends   map[uint64]uint32
+
+	ParsedPackets  int
+	GroundEntities int
+	InvalidUIDs    int
+	MissingUIDs    int
+	UnknownModels  int
+	Conflicts      int
+	ClassConflicts int
+	ParseErrors    int
+	LastError      error
+
+	ecs            *ecs.PacketECSParser
+	conflicts      map[uint64]bool
+	classConflicts map[uint64]bool
+}
+
+// NewParser creates an independent ECS reader. constructionReserved must be
+// true for replay version 0x00018C1C, matching PacketECSParser.
+func NewParser(maps ecs.ComponentHashMaps, constructionReserved bool) *Parser {
+	e := ecs.NewPacketECSParser(maps)
+	e.ConstructionReservedByte = constructionReserved
+	e.AllowMissingPODDataComponents = true
+	return &Parser{
+		Models: map[uint64]Info{},
+		ecs:    e,
+	}
+}
+
+func (p *Parser) Name() string { return "groundmeta" }
+
+func (p *Parser) ParsesMatching() map[byte][][]packet.ParsingCondition {
+	return map[byte][][]packet.ParsingCondition{6: nil}
+}
+
+// Parse consumes one ECS packet. The returned value is the current registry
+// size; callers should read Models rather than rely on the return value.
+func (p *Parser) Parse(pk *packet.Packet) (any, error) {
+	if p == nil || pk == nil {
+		return nil, nil
+	}
+	if p.ecs == nil {
+		return nil, fmt.Errorf("groundmeta parser is not initialized")
+	}
+	if len(pk.PacketPayload) > 0 && pk.PacketPayload[0] == 0x26 {
+		if err := p.observeDestructions(pk); err != nil {
+			return nil, err
+		}
+	}
+	skippedBefore := p.ecs.SkippedConstructions
+	raw, err := p.ecs.Parse(pk)
+	p.ecs.Messages = p.ecs.Messages[:0]
+	if err != nil {
+		p.ParseErrors++
+		p.LastError = err
+		return nil, fmt.Errorf("groundmeta ECS packet %d: %w", pk.Seq, err)
+	}
+	p.ParsedPackets++
+	dat, ok := raw.(*ecs.ParsedPacketECS)
+	if !ok || dat == nil {
+		return len(p.Models), nil
+	}
+
+	for _, msg := range dat.Messages {
+		if msg == nil {
+			continue
+		}
+		for _, parsed := range msg.Parsed {
+			entity, ok := parsed.(*ecs.Entity)
+			if !ok || entity == nil {
+				continue
+			}
+			p.ObserveEntityAt(msg.EID, entity, pk.CurrentTime)
+		}
+	}
+	// OURS: the ECS parser now skips a construction it cannot read instead of
+	// dropping the whole packet. The readable ones were applied above; the
+	// skip is still reported so callers and counters see it.
+	if skipped := p.ecs.SkippedConstructions - skippedBefore; skipped > 0 {
+		p.ParseErrors++
+		p.LastError = fmt.Errorf("groundmeta ECS packet %d: %d construction(s) skipped", pk.Seq, skipped)
+		return len(p.Models), p.LastError
+	}
+	return len(p.Models), nil
+}
+
+// ObserveEntity can be used by integrations that already parsed an ECS entity
+// with AllowMissingPODDataComponents enabled.
+func (p *Parser) ObserveEntity(eid uint64, entity *ecs.Entity) (Info, bool) {
+	return p.observeEntity(eid, entity, nil)
+}
+
+func (p *Parser) ObserveEntityAt(eid uint64, entity *ecs.Entity, stamp uint32) (Info, bool) {
+	return p.observeEntity(eid, entity, &stamp)
+}
+
+func (p *Parser) observeEntity(eid uint64, entity *ecs.Entity, stamp *uint32) (Info, bool) {
+	if p == nil || entity == nil {
+		return Info{}, false
+	}
+	storageName, storage, ok := findGroundStorage(&entity.Data)
+	if !ok {
+		return Info{}, false
+	}
+	p.GroundEntities++
+	uid, ok := ecs.GetObjectData[int32](&entity.Data, "uid")
+	if !ok {
+		p.MissingUIDs++
+		return Info{}, false
+	}
+	if uid < 0 || uid >= maxGroundUID {
+		p.InvalidUIDs++
+		return Info{}, false
+	}
+	info := Info{
+		UID:     uint16(uid),
+		EID:     eid,
+		Kind:    kindOf(entity.Template, storageName),
+		Storage: storageName,
+		Entity:  entity,
+	}
+	if stamp != nil {
+		info.ConstructionTime, info.HasConstructionTime = *stamp, true
+		if transform, found := ecs.GetObjectData[ecs.TMatrix](&entity.Data, "transform"); found {
+			position := transform.V4
+			info.Position = &position
+		}
+	}
+	info.ClassModel, _ = ecs.GetObjectData[string](&entity.Data, "unit__className")
+	info.MissionName, _ = ecs.GetObjectData[string](&entity.Data, "unit__missionName")
+	storageModel, storageErr := UnitStorageUnitName(storage.Raw)
+	if storageErr == nil {
+		info.StorageModel = storageModel
+	}
+	info.RawModel = info.ClassModel
+	if info.RawModel == "" {
+		info.RawModel = info.StorageModel
+	}
+	sources := []string{}
+	if info.ClassModel != "" {
+		sources = append(sources, "ecs:unit__className")
+	}
+	if info.StorageModel != "" {
+		sources = append(sources, "ecs:"+storageName+"#0x6")
+	}
+	if info.ClassModel != "" && info.StorageModel != "" && !sameGroundModel(info.ClassModel, info.StorageModel) {
+		info.ClassConflict = true
+	}
+	info.Source = "unknown"
+	if len(sources) > 0 {
+		info.Source = strings.Join(sources, "+")
+	}
+	if team, ok := ecs.GetObjectData[int32](&entity.Data, "team"); ok {
+		v := team
+		info.Team = &v
+		info.TeamSource = "ecs:team"
+	}
+	if unitType, ok := ecs.GetObjectData[int32](&entity.Data, "unitType"); ok {
+		v := unitType
+		info.UnitType = &v
+	}
+	if info.RawModel == "" {
+		p.UnknownModels++
+	}
+	key := uint64(info.UID)
+	p.ensureEvidenceMaps()
+	if info.ClassConflict {
+		if !p.classConflicts[key] {
+			p.ClassConflicts++
+		}
+		p.classConflicts[key] = true
+	}
+	prev, exists := p.Models[key]
+	if exists {
+		if prev.RawModel != "" && info.RawModel == "" {
+			// Keep the last non-empty identity. A later transient unknown
+			// observation must not erase evidence for the same UID.
+			info.ClassConflict = p.classConflicts[key]
+			info.Conflict = p.conflicts[key]
+			p.All = append(p.All, info)
+			return prev, true
+		}
+		if prev.RawModel != "" && info.RawModel != "" && !sameGroundModel(prev.RawModel, info.RawModel) {
+			if !p.conflicts[key] {
+				p.Conflicts++
+			}
+			p.conflicts[key] = true
+		}
+	}
+	info.Conflict = p.conflicts[key]
+	info.ClassConflict = p.classConflicts[key]
+	p.Models[key] = info
+	p.All = append(p.All, info)
+	return info, true
+}
+
+func (p *Parser) observeDestructions(pk *packet.Packet) error {
+	if len(pk.PacketPayload) < 2 {
+		return fmt.Errorf("short ground metadata destruction packet")
+	}
+	count := int(pk.PacketPayload[1]) + 1
+	if count > (len(pk.PacketPayload)-2)/2 {
+		return fmt.Errorf("ground metadata destruction count exceeds remaining payload")
+	}
+	r := danet.NewBitReader(pk.PacketPayload[2:])
+	// Validate the entire bounded packet before publishing any lifetime changes.
+	eids := make([]uint64, 0, count)
+	for i := 0; i < count; i++ {
+		eid, err := packet.ReadEID(r)
+		if err != nil {
+			return fmt.Errorf("ground metadata destruction EID: %w", err)
+		}
+		eids = append(eids, eid)
+	}
+	if p.Ends == nil {
+		p.Ends = map[uint64]uint32{}
+	}
+	for _, eid := range eids {
+		for _, info := range p.Models {
+			if info.EID == eid {
+				p.Ends[eid] = pk.CurrentTime
+				break
+			}
+		}
+	}
+	return nil
+}
+
+func (p *Parser) ensureEvidenceMaps() {
+	if p.Models == nil {
+		p.Models = map[uint64]Info{}
+	}
+	if p.conflicts == nil {
+		p.conflicts = map[uint64]bool{}
+	}
+	if p.classConflicts == nil {
+		p.classConflicts = map[uint64]bool{}
+	}
+}
+
+// Lookup returns the latest metadata for a real replay UID.
+func (p *Parser) Lookup(uid uint16) (Info, bool) {
+	if p == nil {
+		return Info{}, false
+	}
+	info, ok := p.Models[uint64(uid)]
+	return info, ok
+}
+
+func findGroundStorage(o *ecs.Object) (string, ecs.UnitStorage, bool) {
+	for _, name := range groundStorageComponents {
+		if v, ok := ecs.GetObjectData[ecs.UnitStorage](o, name); ok {
+			return name, v, true
+		}
+	}
+	return "", ecs.UnitStorage{}, false
+}
+
+func kindOf(template, storage string) string {
+	if template != "" {
+		return template
+	}
+	return strings.TrimPrefix(storage, "unit_storage__")
+}
