@@ -28,7 +28,7 @@ import (
 	"strings"
 )
 
-const version = "0.9.0"
+const version = "0.9.1"
 
 //go:embed webdist
 var webFS embed.FS

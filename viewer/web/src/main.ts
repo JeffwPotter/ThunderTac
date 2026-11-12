@@ -116,6 +116,7 @@ async function open(id: string) {
   debrief.invalidate();
   if (!$('debrief').hidden) debrief.open();
   viewer.onSelect = (uid, shift) => select(uid, shift);
+  viewer.onFollowChange = () => syncFollowBtn();
   viewer.onHover = (uid, x, y) => {
     const tip = $('tip');
     if (uid < 0 || !ses) { tip.hidden = true; return; }
@@ -536,7 +537,7 @@ function bindTop() {
   $('btnInvolved').onclick = () => { if (!ses) return; const keep = involvedWithMe(); if (!keep.size) return; for (const p of ses.players) p.hidden = !keep.has(p.slot); viewer.restyle(); buildPlayers(); };
   ($('evMine') as HTMLInputElement).onchange = buildEvents; ($('evKind') as HTMLSelectElement).onchange = buildEvents;
 }
-const HINT3 = 'Drag: rotate · Right-drag: move · Wheel: zoom · Click: select · Double-click: follow · Shift-click: measure';
+const HINT3 = 'Drag: rotate around the screen centre · Right-drag: move · Wheel: zoom to the cursor · Click: select · Double-click: follow (or centre on the ground) · Shift-click: measure';
 const HINT2 = 'Drag: move · Wheel: zoom · Click: select · Double-click: follow · Shift-click: measure';
 function setMode(m: '3d' | '2d') {
   viewer.setMode(m); settings.view = m; save();

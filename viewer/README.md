@@ -29,11 +29,20 @@ only answers this PC. The icon and DPI setting are linked in from
   - `debrief.ts` — Debrief page; `library.ts` — Library page; `pk.ts` — Pk from similar shots; `charts.ts` — charts
 - `build.sh` — bundles the pages with esbuild and compiles `bin/wtviewer.exe`.
 
-## Not yet a packaged desktop app
-The plan names Tauri as the app shell. This build uses a local program plus a
-Microsoft Edge "app window" instead, because it needs nothing installed on the
-PC and can be built entirely by Claude. The pages are the same either way;
-wrapping them in Tauri later changes the window, not the viewer.
+## Desktop window
+Since v0.8.1 `wtviewer.exe` shows the viewer in its own window (Edge WebView2,
+built into Windows 10/11) instead of Tauri, which could not be built here.
+`-browser` opens Edge/the default browser instead.
+
+## Mouse (3D view)
+- **Left-drag**: rotate around the ground point in the middle of the screen.
+- **Right-drag** (or Ctrl + left-drag): move the view. Doing this while following
+  a unit stops following.
+- **Wheel**: zoom toward the mouse pointer, all the way down to about 30 m above
+  the ground. The camera never goes below the terrain.
+- **Click**: select · **Shift-click**: measure · **Double-click** a unit: follow it;
+  double-click the ground: centre the view there.
+- 2D map: drag to move, wheel to zoom at the pointer.
 
 ## Keys
 Space play/pause · ←/→ 5 s (Shift: 30 s) · , . slower/faster · F follow ·

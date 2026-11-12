@@ -148,6 +148,7 @@ export class Viewer {
   dlzInfo: { missile: string, rmax: number, rne: number, range: number } | null = null;
   private dlzCache: { key: string, at: number, rmax: number, rne: number, missile: string } | null = null;
   onHover: (id: number, x: number, y: number) => void = () => {};
+  onFollowChange: () => void = () => {};
   private selRing!: THREE.Mesh;
   private labelLayer: HTMLElement;
   private container: HTMLElement;
@@ -171,9 +172,11 @@ export class Viewer {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true; this.controls.dampingFactor = 0.12;
     this.controls.maxPolarAngle = Math.PI * 0.495;
-    this.controls.minDistance = 60; this.controls.maxDistance = 400000;
+    this.controls.minDistance = 30; this.controls.maxDistance = 400000;
     this.controls.zoomToCursor = true;
     this.controls.screenSpacePanning = false;
+    this.controls.zoomSpeed = 1.6;    // the view spans hundreds of km
+    this.controls.rotateSpeed = 0.8;
     // 2D map: straight down, north up, own pan/zoom
     this.cam2d = new THREE.OrthographicCamera(-1, 1, 1, -1, 10, 900000);
     this.cam2d.up.set(0, 0, -1); this.cam2d.position.set(0, 300000, 0); this.cam2d.lookAt(0, 0, 0); this.cam2d.zoom = 0.006;
@@ -185,6 +188,14 @@ export class Viewer {
 
     const el = this.renderer.domElement;
     let drag2: { x: number, y: number } | null = null;
+    // 3D: these run before the orbit controls' own handlers (capture phase)
+    el.addEventListener('pointerdown', e => {
+      if (this.mode !== '3d') return;
+      const panning = e.button === 2 || (e.button === 0 && (e.ctrlKey || e.metaKey)); // (shift-click is measuring)
+      if (panning && this.follow >= 0) { this.setFollow(-1); this.onFollowChange(); } // grabbing the map stops following
+      if (this.follow < 0) this.anchorPivot();  // orbit around what is in the middle of the screen
+    }, { capture: true });
+    el.addEventListener('wheel', () => { if (this.mode === '3d' && this.follow < 0) this.anchorPivot(); }, { capture: true, passive: true });
     el.addEventListener('pointerdown', e => { this.downAt = { x: e.clientX, y: e.clientY }; if (this.mode === '2d') { drag2 = { x: e.clientX, y: e.clientY }; el.setPointerCapture(e.pointerId); } });
     el.addEventListener('pointermove', e => {
       if (!drag2 && !(e.buttons & 7)) {
@@ -221,10 +232,51 @@ export class Viewer {
     el.addEventListener('dblclick', e => {
       const r = el.getBoundingClientRect();
       const id = this.pick(e.clientX - r.left, e.clientY - r.top);
-      if (id >= 0) { this.onSelect(id, false); this.setFollow(id); }
+      if (id >= 0) { this.onSelect(id, false); this.setFollow(id); this.onFollowChange(); return; }
+      if (this.mode !== '3d') return;
+      const g = this.groundUnder(e.clientX - r.left, e.clientY - r.top);   // double-click the ground: centre the view there
+      if (g) {
+        if (this.follow >= 0) { this.setFollow(-1); this.onFollowChange(); }
+        const d = g.clone().sub(this.controls.target);
+        this.controls.target.add(d); this.camera.position.add(d); this.controls.update();
+      }
     });
     new ResizeObserver(() => this.resize()).observe(container);
     this.resize();
+  }
+
+  // First point where the ray from the camera through screen pixel (x, y) meets the
+  // ground (terrain, or sea level without a terrain file), or null if it does not
+  // within 400 km (looking at the sky).
+  groundUnder(x: number, y: number): THREE.Vector3 | null {
+    const W = this.container.clientWidth || 800, H = this.container.clientHeight || 600;
+    const ray = new THREE.Raycaster(); ray.setFromCamera(new THREE.Vector2(x / W * 2 - 1, -(y / H) * 2 + 1), this.camera);
+    return this.marchGround(ray.ray.origin, ray.ray.direction);
+  }
+  private marchGround(o: THREE.Vector3, d: THREE.Vector3): THREE.Vector3 | null {
+    const tr = this.session ? this.session.terrain : null;
+    const above = (p: THREE.Vector3) => p.y - groundHeight(tr, p.x, -p.z);
+    const p = o.clone(); let prev = 0, s = 0;
+    if (above(p) <= 0) return null;
+    for (let i = 0; i < 400 && s < 400000; i++) {
+      const h = above(p);
+      if (h <= 0) {             // crossed: refine between prev and s
+        let a = prev, b = s;
+        for (let k = 0; k < 20; k++) { const m = (a + b) / 2; p.copy(o).addScaledVector(d, m); if (above(p) > 0) a = m; else b = m; }
+        return p.copy(o).addScaledVector(d, b);
+      }
+      prev = s; s += Math.max(20, h * 0.5);  // step by half the height above the ground
+      p.copy(o).addScaledVector(d, s);
+    }
+    return null;
+  }
+  // Put the orbit pivot on the ground point in the middle of the screen. The point
+  // lies on the line of sight, so the view does not move; rotating then turns
+  // around what you are looking at, and zooming can go all the way to the ground.
+  anchorPivot() {
+    const dir = new THREE.Vector3(); this.camera.getWorldDirection(dir);
+    const g = this.marchGround(this.camera.position, dir);
+    if (g && g.distanceTo(this.camera.position) > this.controls.minDistance * 1.5) this.controls.target.copy(g);
   }
 
   resize() {
@@ -609,7 +661,12 @@ export class Viewer {
         this.controls.target.copy(this.vP); this.followPrev.copy(this.vP); this.followHas = true;
       }
     }
-    if (!is2d) this.controls.update();
+    if (!is2d) {
+      this.controls.update();
+      // never below the ground
+      const gy = groundHeight(ses.terrain, this.camera.position.x, -this.camera.position.z) + 30;
+      if (this.camera.position.y < gy) this.camera.position.y = gy;
+    }
     cam.updateMatrixWorld();
 
     let nDead = 0;
