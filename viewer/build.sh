@@ -7,6 +7,8 @@ ESBUILD=${ESBUILD:-esbuild}
 "$ESBUILD" web/src/main.ts --bundle --format=iife --target=es2020 --minify \
   --alias:three=./web/vendor/three/three.module.js --outfile=server/webdist/app.js --log-level=warning
 cp web/index.html web/style.css server/webdist/
+# Icon + manifest are linked in from server/rsrc_windows_amd64.syso (regenerate with tools/mksyso).
 ( cd server && GOTOOLCHAIN=local GOFLAGS=-mod=mod GOPROXY=off go build -o ../../bin/wtviewer ./ \
-  && GOTOOLCHAIN=local GOFLAGS=-mod=mod GOPROXY=off GOOS=windows GOARCH=amd64 go build -trimpath -o ../../bin/wtviewer.exe ./ )
+  && GOTOOLCHAIN=local GOFLAGS=-mod=mod GOPROXY=off GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-H windowsgui" -o ../../bin/wtviewer.exe ./ \
+  && GOTOOLCHAIN=local GOFLAGS=-mod=mod GOPROXY=off GOOS=windows GOARCH=amd64 go build -trimpath -o ../../bin/wtviewer-console.exe ./ )
 echo built

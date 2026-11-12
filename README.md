@@ -19,11 +19,15 @@ Pk calculator, heatmaps, compare with the best). How the numbers are worked
 out: `docs\analysis.md`.
 
 ## Viewer (3D and 2D map)
-Double-click `Open Viewer.bat`. A black window opens (the viewer program; keep
-it open) and the viewer appears in its own window. It lists every match in
-`sessions\`. Details and keys: `viewer\README.md`.
+Double-click `Open Viewer.bat`. The viewer opens in its own window (Windows'
+built-in Edge WebView2; no black window). Closing the window quits. It lists
+every match in `sessions\`. Details and keys: `viewer\README.md`.
+`tools\make-shortcut.bat` puts a shortcut with the icon on your Desktop. If the
+window does not appear, run `bin\wtviewer-console.exe` to see messages (or read
+`%LocalAppData%\WTReplayViewer\viewer.log`); `bin\wtviewer.exe -browser`
+opens it in Edge/your browser instead.
 
-## What is here (v0.8.0, 2026-11-12)
+## What is here (v0.8.1, 2026-11-12)
 
 | Folder | What |
 |---|---|
@@ -33,7 +37,9 @@ it open) and the viewer appears in its own window. It lists every match in
 | `golden/` | Expected self-check reports for the reference matches. |
 | `tools/` | `convert.bat` (convert one replay), `update-game-data.bat`, `update-terrain.bat`, `verify-golden.ps1` (regression check). |
 | `bin/wtdecode.exe` | The built decoder for Windows. |
-| `bin/wtassets.exe` | Reads game data from the local War Thunder install: `unpack`, `catalog`, `terrain` (see the scripts in `tools/`). |
+| `bin/wtviewer.exe` | The viewer (own window). `wtviewer-console.exe` is the same program with a console for troubleshooting. |
+| `assets/decoder-tables/` | Missile, bomb, radar and loadout tables made from your install; the decoder uses them in place of its built-in copies. `docs/decoder-tables.md`. |
+| `bin/wtassets.exe` | Reads game data from the local War Thunder install: `unpack`, `catalog`, `tables`, `terrain` (see the scripts in `tools/`). |
 | `assets/terrain/` | Terrain height files (`.wtt`), one per map. Format and findings: `docs/terrain-notes.md`. |
 | `tools/prototypes/terrain/` | Python prototypes that proved terrain extraction. |
 

@@ -30,8 +30,10 @@ it is only a name and nothing is fetched from it. Dependencies are in `vendor/`.
 `cmd/wtdecode/data/*.json` (missile, bomb and radar catalogues) and
 `data/ecshashes.json` were generated from game files of late 2026. New aircraft,
 missiles or radars added by later game updates will show as unidentified until
-these tables are regenerated from the local game install (planned: asset pipeline).
+these tables are regenerated from the local game install: since v0.8.0 that is
+`wtassets tables` (see `docs/decoder-tables.md`).
 
 - `cmd/wtdecode/wtr_extra.go` (ours, v0.3.0): terrain lookup, ending aircraft tracks at ground impact, the `underground` self-check, name clean-up, and `launches.json` (launch conditions and inferred missile outcomes).
 - v0.5.0 (ours): `cmd/wtassets/catalog.go` (catalogue from the unpacked game data); in `wtr_extra.go` the catalogue reader, `map.json` (airfields from the snapshot's airfield code, areas from the catalogue), derived track columns, `stats.json`.
 - v0.7.0 (ours): `oodle/` — Oodle Leviathan decompressor, a Go translation of part of `ooz` by Powzix (https://github.com/powzix/ooz, **GPL-3.0**; compatible with this folder's AGPL-3.0). `cmd/wtassets/terrain.go` — `wtassets terrain`, builds `.wtt` terrain for every map (level-file layouts from DagorEngine, BSD-3-Clause).
+- v0.8.0 (ours): `cmd/wtassets/tables.go` (`wtassets tables`, Go port of the snapshot's table generators, verified byte-identical on the pinned snapshot); `wrpl/blk_ordered.go` (order-preserving BLK to JSON); `cmd/wtdecode/aaa_tables.go` (loads regenerated tables from `assets/decoder-tables`); `wtrGroundCut` in `wtr_extra.go`.

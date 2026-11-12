@@ -28,7 +28,7 @@ import (
 	"strings"
 )
 
-const version = "0.8.0"
+const version = "0.8.1"
 
 //go:embed webdist
 var webFS embed.FS
@@ -72,6 +72,7 @@ func main() {
 	catDir := flag.String("catalog", filepath.Join(root, "assets", "catalog"), "folder with catalogue files from the game install")
 	port := flag.Int("port", 0, "port to use (0 = pick a free one)")
 	noOpen := flag.Bool("no-open", false, "do not open a window")
+	useBrowser := flag.Bool("browser", false, "open in Edge/the browser instead of the built-in window")
 	dev := flag.String("dev", "", "serve the pages from this folder instead of the built-in copy")
 	decName := "wtdecode"
 	if runtime.GOOS == "windows" {
@@ -210,12 +211,18 @@ func main() {
 	fmt.Println("  Terrain folder :", *terrDir)
 	fmt.Println("  Viewer address :", url)
 	fmt.Println()
-	fmt.Println("The viewer opens in its own window. Keep this window open while you")
-	fmt.Println("use it; close this window to quit.")
-	if !*noOpen {
-		openWindow(url)
+	fmt.Println("The viewer opens in its own window. Close that window to quit.")
+	go func() { log.Fatal(http.Serve(ln, mux)) }()
+	if *noOpen {
+		select {}
 	}
-	log.Fatal(http.Serve(ln, mux))
+	// Own window (WebView2) first; closing it quits the program. If that is not
+	// possible, or -browser is given, fall back to an Edge app window / browser.
+	if !*useBrowser && runNative(url) {
+		return
+	}
+	openWindow(url)
+	select {}
 }
 
 func noCache(h http.Handler) http.Handler {

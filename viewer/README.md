@@ -4,12 +4,16 @@ The replay viewer app. It reads only our own files: converted matches
 (`sessions\*.wtr`) and terrain (`assets\terrain\*.wtt`).
 
 ## Use
-Double-click `Open Viewer.bat` in the project folder. A black window appears
-(the viewer program) and the viewer opens in its own window. Close the black
-window to quit. Nothing is sent anywhere; the program only answers this PC.
+Double-click `Open Viewer.bat` in the project folder. The viewer opens in its
+own window (Edge WebView2, built into Windows 10/11). Close the window to quit.
+Nothing is sent anywhere except when you use "+ Add match"; the program otherwise
+only answers this PC. The icon and DPI setting are linked in from
+`server/rsrc_windows_amd64.syso`, made by `tools/mksyso` from `res/app.ico` and
+`res/app.manifest` (the usual tool could not be downloaded here, so it is our own).
 
 ## Parts
-- `server/` — `wtviewer`, a small Go program (standard library only, no decoder
+- `server/` — `wtviewer`, a small Go program (standard library plus the vendored
+  go-webview2 in `server/third_party/`; no decoder
   code). It has the pages built in, hands the window the matches and terrain
   from the project folder, and analyses matches for the Debrief and Library
   pages (`analysis.go`, `envelope.go`, `library.go`; rules in `docs/analysis.md`).
