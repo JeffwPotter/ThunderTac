@@ -19,12 +19,18 @@ and steers. Explain changes in plain language.
   network use is "+ Add match", which downloads public replay files from
   `wt-game-replays.warthunder.com` (`viewer/server/fetch.go`).
 * **Out of scope:** WebRTC/WebSocket live multi-user playback rooms, unless asked.
-* **On hold (user decision 2026-11-12):** the `localhost:8111` live telemetry
-  recorder. Do not start it until the user asks.
+* **Own-ship telemetry (v0.9.0):** `viewer/server/live.go` records the game's
+  `localhost:8111` data while the viewer is open (opt-in setting) and matches each
+  flight to the player's aircraft (`docs/live-telemetry.md`). Results live in a
+  sidecar `<id>.ownship.json`; **never modify `.wtr` files from the viewer.**
 * **Active tracks:**
   1. Fox-1/Fox-3 fly-out physics and lock/multipath grading
      (`viewer/server/envelope.go`, `viewer/web/src/envelope.ts`, `viewer/server/analysis.go`).
-  2. Pk shooter scope (all players / my shots / me + wingman) in `viewer/web/src/pk.ts` (done in v0.8.2).
+  2. First real test of the telemetry recorder (field names of `/state` and
+     `/indicators` are not yet verified against a live game; each log stores the
+     names it saw in `keys`).
+* **Tried and rejected (with data, v0.9.0; see `docs/analysis.md`):** extra
+  turning drag against beaming targets; smoothing aircraft speeds.
 
 ## 2. Repository Architecture & Data Pipeline
 
@@ -34,7 +40,7 @@ and steers. Explain changes in plain language.
 | Oodle decompressor | `decoder/oodle/` | Our Go translation of part of `ooz` (**GPL-3.0**), Leviathan only. Used for map level files. |
 | Game data tool (`wtassets`) | `decoder/cmd/wtassets/` | `unpack` (game archives), `catalog` (`assets/catalog/`: vehicles, weapons, radars, mission areas), `tables` (`assets/decoder-tables/`), `terrain` (`assets/terrain/*.wtt`, `docs/terrain-notes.md`). |
 | Session archive (`.wtr`) | `docs/wtr-format.md` | ZIP: `manifest.json`, `players.json`, `units.json`, `tracks.bin` (~4 Hz samples), `events.json`, `states.json`, `launches.json`, `map.json`, `stats.json`. |
-| Viewer backend (`wtviewer`) | `viewer/server/` | Go HTTP server on 127.0.0.1 plus the WebView2 window (`window_windows.go`; vendored libraries in `third_party/`). Match list (`library.go`, `wtrfile.go`), fetcher (`fetch.go`), analysis (`analysis.go`, `envelope.go`). Uses no decoder code. |
+| Viewer backend (`wtviewer`) | `viewer/server/` | Go HTTP server on 127.0.0.1 plus the WebView2 window (`window_windows.go`; vendored libraries in `third_party/`). Match list (`library.go`, `wtrfile.go`), fetcher (`fetch.go`), analysis (`analysis.go`, `envelope.go`), telemetry recorder and matching (`live.go`). Uses no decoder code. Files it writes next to a match: `<id>.analysis.json`, `<id>.library.json`, `<id>.ownship.json` (caches; safe to delete). |
 | Viewer frontend | `viewer/web/` | TypeScript + Three.js, bundled by esbuild into `viewer/server/webdist/` (committed). 3D/2D view (`scene.ts`, `lines.ts`), playback (`main.ts`), charts (`charts.ts`), Debrief (`debrief.ts`), Library (`library.ts`), fly-out model (`envelope.ts`), Pk (`pk.ts`). |
 
 ## 3. Critical Code Invariants & Conventions
@@ -93,6 +99,11 @@ defaults in `DEFAULTS`; never rename existing ones.
   in `decoder/`.
 * **Windows icon/manifest:** `viewer/server/rsrc_windows_amd64.syso`, regenerate with
   `viewer/tools/mksyso` from `viewer/res/`.
+* **Viewer tests:** `go test ./...` in `viewer/server`. With
+  `WTRV_SESSIONS=<folder of .wtr>` also: fly-out model vs recorded flights and
+  outcome zones (`envelope_check_test.go`), telemetry matching on synthetic
+  recordings (`live_test.go`), target guessing on known targets (`infer_test.go`).
+  Bump `analysisVersion` in `analysis.go` whenever analysis output changes.
 * **Golden regression check:** after touching `decoder/` or `.wtr` output, run
   `powershell -ExecutionPolicy Bypass -File tools/verify-golden.ps1` (compares to
   `golden/*.checks.json`).

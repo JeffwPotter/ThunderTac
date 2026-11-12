@@ -161,3 +161,9 @@ Array, one per player: `slot, flights, flightTimeS, distanceKm, maxAltM, meanAlt
 ## Not in schema 1 (planned)
 - Terrain and map image (will be separate asset files, shared between sessions of the same map).
 - Ground-battle specifics.
+
+## Files next to a `.wtr` (written by the viewer, not part of the format)
+`<id>.analysis.json`, `<id>.library.json` (analysis caches) and
+`<id>.ownship.json` (own-ship telemetry matched from `sessions\live\*.wtlive.json`,
+see `docs/live-telemetry.md`). All are rebuilt automatically when stale and can be
+deleted at any time. The viewer never changes the `.wtr` itself.

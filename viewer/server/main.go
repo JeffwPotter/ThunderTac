@@ -28,7 +28,7 @@ import (
 	"strings"
 )
 
-const version = "0.8.2"
+const version = "0.9.0"
 
 //go:embed webdist
 var webFS embed.FS
@@ -72,6 +72,7 @@ func main() {
 	catDir := flag.String("catalog", filepath.Join(root, "assets", "catalog"), "folder with catalogue files from the game install")
 	port := flag.Int("port", 0, "port to use (0 = pick a free one)")
 	noOpen := flag.Bool("no-open", false, "do not open a window")
+	record := flag.Bool("record", false, "record own-ship telemetry from the game (localhost:8111) from the start")
 	useBrowser := flag.Bool("browser", false, "open in Edge/the browser instead of the built-in window")
 	dev := flag.String("dev", "", "serve the pages from this folder instead of the built-in copy")
 	decName := "wtdecode"
@@ -156,6 +157,34 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(ana)
+	})
+	// own-ship telemetry from the game's local web server (live.go)
+	liveDir := filepath.Join(*sessDir, "live")
+	rec := newLiveRecorder(liveDir)
+	defer rec.Close()
+	if *record {
+		rec.setOn(true)
+	}
+	mux.HandleFunc("/api/live", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			rec.setOn(r.URL.Query().Get("on") == "1")
+		}
+		writeJSON(w, rec.status())
+	})
+	mux.HandleFunc("/api/ownship/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/ownship/")
+		if !safeName.MatchString(id) {
+			http.NotFound(w, r)
+			return
+		}
+		b, err := st.ownship(id, r.URL.Query().Get("me"), liveDir, r.URL.Query().Get("force") == "1")
+		if err != nil {
+			writeJSON(w, map[string]any{"version": ownshipVersion, "lives": []any{}, "note": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(b)
 	})
 	mux.HandleFunc("/api/library", func(w http.ResponseWriter, r *http.Request) {
 		list := st.library()

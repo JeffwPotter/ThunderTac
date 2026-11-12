@@ -40,6 +40,15 @@ this (and the outcome check below) on any folder of matches:
 - A hit needs the missile to reach the target before its guidance time runs
   out and while it is faster than 280 m/s and 1.1 × the target.
 - Lofting missiles: drag is taken at a higher altitude for long shots (rough).
+- No extra drag for turning after a crossing (beaming) target. Tried in v0.9.0
+  (induced drag from the line-of-sight rate, proportional navigation N = 3, up to
+  the missile's G limit): without it, 15 of 16 kills on beaming targets are
+  already inside the estimated max range; with even a small amount the share of
+  all kills inside max range fell from 94 % to 85 % (more: 56 %). So the data does
+  not support it; not used.
+- Speeds come from single replay sample steps. Measured: samples every
+  249 ± 14 ms, speed changes 1.8 m/s rms per step, so the tracks are already
+  smooth; a wider window (tried) changed nothing measurable and blurs turns.
 
 Check against outcomes (441 graded shots, four matches, v0.8.2): 94 % of
 kills were inside the estimated max range (92 % before v0.8.2). Kill rate
@@ -73,6 +82,25 @@ Each factor is good / fair / poor; the shot gets its worst factor.
   while the radar looks down at it (target less than about 3.5° above the
   radar's horizon). *Half-width = width/2 is our reading.* The meter also shows
   a looser ±40 m/s band.
+
+**Dropped lock (SARH, v0.9.0):** for a semi-active shot that did not kill and
+was locked at launch, the moment the shooter's lock on the target ended for good
+(no lock for 2 s) before the missile arrived. Graded *poor*, and called
+*defensive* when the shooter had turned more than 60° away from the target
+within 6 s before (or 2 s after) that moment, or a missile was in the air
+against the shooter. Four matches: 10 SARH shots, 4 dropped locks, 2 defensive.
+
+**Guessed targets (v0.9.0):** 70 of 581 launches in the four matches have no
+target in the replay. For those, the enemy aircraft whose horizontal collision
+course the missile follows best (average angle under 12°, the next candidate at
+least 6° worse, from 2 s after launch) is taken as the target and marked as a
+guess. Tested by hiding known targets: right 90 % of the time when it guesses,
+but it guesses only for about a quarter of shots, and only for 4 of the 70
+unknown ones (most of those seem not to have been guiding at anything).
+
+**Active point:** the 3D view marks with a green diamond where each active-radar
+missile's seeker first reported tracking (the debrief already gives your
+distance to the target at that moment).
 
 **After launch** (shown, not graded): lock held, the most you turned away from
 the target (crank), your distance to the target when the missile went active

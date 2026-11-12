@@ -9,6 +9,8 @@ Scope and plan live in the claude.ai Project ("War Thunder Replay Viewer").
 3. **Add a match:** click **+ Add match** and paste a session ID or replay link from warthunder.com (the number in the replay page address, or the 16-letter/number ID). It downloads, converts and opens the match. Or put a downloaded replay (`.wrpl` or its `.zip`) through `tools\convert.bat`.
 4. **Optional, once per game update:** run `tools\update-game-data.bat` to read your own War Thunder install (names, missiles, radars, terrain). It asks for the game folder if it cannot find it. Takes a few minutes and about 800 MB of temporary space.
 5. Debrief and Library work on any converted match; Library gets better with more matches.
+6. **Optional: your own flight data.** Display tab → Game telemetry → tick "Record my flight data while I play" and keep the viewer open while you play. Afterwards your aircraft in the replay shows real IAS, AoA, G, throttle and fuel. Details: `docs/live-telemetry.md`.
+7. Put your in-game name in **Me** and your wingman's in **Wingman** (top bar).
 
 **If something goes wrong** send the author:
 - what you clicked and what happened (a screenshot helps), and
@@ -42,7 +44,7 @@ window does not appear, run `bin\wtviewer-console.exe` to see messages (or read
 `%LocalAppData%\WTReplayViewer\viewer.log`); `bin\wtviewer.exe -browser`
 opens it in Edge/your browser instead.
 
-## What is here (v0.8.2, 2026-11-12)
+## What is here (v0.9.0, 2026-11-12)
 
 | Folder | What |
 |---|---|

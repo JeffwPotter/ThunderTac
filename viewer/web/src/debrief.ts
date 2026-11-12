@@ -212,6 +212,7 @@ export class Debrief {
     const units = this.host.settings.units;
     const cols = h('div', 'cols');
     const left = h('div'); left.appendChild(h('h4', '', 'Why this grade')); this.factors(left, s.factors);
+    if (s.targetGuessed) left.appendChild(h('div', 'fine', 'The replay does not say what this missile was fired at; the target shown is a guess from its flight path (right about 9 times in 10).'));
     if (s.multipathTerminal > 0 && s.targetAglMinM != null) left.appendChild(h('div', 'fine', 'Target\'s lowest height during the last 10 s of the flight: ' + fmtAlt(Math.max(0, s.targetAglMinM), units)));
     const r = this.pkFor(s);
     if (r) left.appendChild(h('div', 'fine', 'Pk from history: ' + Math.round(r.pk * 100) + '% (' + r.n + ' similar shots from ' + r.pool + ', 90% range ' + Math.round(r.lo * 100) + '–' + Math.round(r.hi * 100) + '%)'));

@@ -14,7 +14,7 @@ import (
 	"strings"
 )
 
-const analysisVersion = "a4" // a4: two-stage motors, drag fit (v0.8.2)
+const analysisVersion = "a5" // a5: SARH dropped lock, guessed targets (v0.9.0)
 
 const (
 	nearKm          = 40.0 // "enemy nearby"
@@ -82,6 +82,9 @@ type shotA struct {
 	ActiveT                      opt
 	DistAtActiveM, DistAtEndM    opt
 	ShooterTurnedColdT           opt
+	LockDroppedT                 opt    // SARH: when the shooter's lock on the target ended for good before the missile arrived
+	LockDroppedWhy               string
+	TargetGuessed                bool // the replay names no target; guessed from the flight path (inferTarget) // "defensive" (turned away or a missile was coming at the shooter) or ""
 	EndSpeedMs, EndClosureMs     opt
 	Outcome, Reason, Confidence  string
 	MissDistanceM                opt
@@ -472,6 +475,17 @@ func (c *ctx) shot(l wLaunch) shotA {
 	if l.TargetPlayer != nil {
 		sh.TargetPlayer = *l.TargetPlayer
 	}
+	guessed := false
+	if l.Shooter != nil && *l.Shooter >= 0 && (l.Target == nil || *l.Target < 0) {
+		if g, _ := inferTarget(s, l.Missile, *l.Shooter, l.T); g >= 0 {
+			gg := g
+			l.Target = &gg
+			if s.Units[g].Owner >= 0 {
+				sh.TargetPlayer = s.Units[g].Owner
+			}
+			guessed = true
+		}
+	}
 	if l.Shooter == nil || l.Target == nil || *l.Shooter < 0 || *l.Target < 0 {
 		sh.Grade = "unknown"
 		if l.Shooter != nil {
@@ -480,6 +494,7 @@ func (c *ctx) shot(l wLaunch) shotA {
 		return sh
 	}
 	sh.Shooter, sh.Target = *l.Shooter, *l.Target
+	sh.TargetGuessed = guessed
 	S, T := s.Units[sh.Shooter], s.Units[sh.Target]
 	t0 := l.T
 	ps, pt := S.pos(t0), T.pos(t0)
@@ -615,6 +630,45 @@ func (c *ctx) shot(l wLaunch) shotA {
 			default:
 				sh.Factors = append(sh.Factors, factor{"support", "good", "Lock held while the missile needed it"})
 			}
+		}
+	}
+	// SARH: did the shooter drop the lock before the missile arrived, and was it to defend?
+	if radar && sh.Guidance == "SARH" && sh.LockedAtLaunch && sh.Outcome != "kill" {
+		lost := math.NaN()
+		for t := t0 + 1000; t <= end-500; t += 250 {
+			if !S.alive(t) {
+				lost = t
+				break
+			}
+			if !c.designates(sh.Shooter, sh.Target, t) && !c.designates(sh.Shooter, sh.Target, t+1000) && !c.designates(sh.Shooter, sh.Target, t+2000) {
+				lost = t
+				break
+			}
+		}
+		if !math.IsNaN(lost) && S.alive(lost) {
+			why := ""
+			// turned well away from the target around the moment the lock went
+			for t := lost - 6000; t <= lost+2000; t += 500 {
+				if S.alive(t) && T.alive(t) && angleDeg(S.fwd(t), T.pos(t).sub(S.pos(t))) > 60 {
+					why = "defensive"
+					break
+				}
+			}
+			// or a missile was in the air against the shooter
+			for _, o := range c.s.Launches {
+				if o.Target != nil && *o.Target == sh.Shooter && o.T > lost-20000 && o.T < lost+1000 && o.Missile >= 0 && o.Missile < len(c.s.Units) {
+					if c.s.Units[o.Missile].TEnd > lost-2000 {
+						why = "defensive"
+					}
+				}
+			}
+			sh.LockDroppedT = of(lost)
+			sh.LockDroppedWhy = why
+			txt := fmt.Sprintf("Lock dropped %.0f s after launch, before the missile arrived: a semi-active missile cannot guide without it", (lost-t0)/1000)
+			if why == "defensive" {
+				txt = fmt.Sprintf("Lock dropped %.0f s after launch while you were defending (turned away or a missile was coming at you): the semi-active missile lost its guidance", (lost-t0)/1000)
+			}
+			sh.Factors = append(sh.Factors, factor{"dropped", "poor", txt})
 		}
 	}
 	if !math.IsNaN(activeT) && S.alive(activeT) && T.alive(activeT) {
@@ -1457,3 +1511,81 @@ func (c *ctx) summarise(a *analysis, pa *playerA) {
 		return pa.Mistakes[i].T < pa.Mistakes[j].T
 	})
 }
+
+// inferTarget guesses the target of a missile whose target the replay does not
+// name (v0.9.0). A guided missile flies toward the point where it will meet
+// its target (proportional navigation settles on that collision course). For
+// each enemy aircraft alive at launch within 80 km, the horizontal angle between
+// the missile's heading and the collision course to that aircraft (constant
+// velocities) is averaged from 2 s after launch to 1 s before the missile's end
+// (at most 20 s; ignoring height keeps lofting missiles readable). Accepted when
+// the best average is under maxDeg and the next candidate is at least marginDeg
+// worse. Checked on launches whose target is known (TestInferTarget).
+func inferTarget(s *wSession, missile, shooter int, t0 float64) (int, float64) {
+	maxDeg, marginDeg := inferMaxDeg, inferMarginDeg
+	m := s.Units[missile]
+	if m.n() < 12 || shooter < 0 {
+		return -1, 0
+	}
+	S := s.Units[shooter]
+	tEnd := math.Min(m.TEnd-1000, t0+20000)
+	best, bestA, second := -1, math.Inf(1), math.Inf(1)
+	for _, u := range s.Units {
+		if u.Kind != "aircraft" || u.ID == shooter || u.Team == S.Team || !u.alive(t0) {
+			continue
+		}
+		if u.pos(t0).sub(S.pos(t0)).norm() > 80000 {
+			continue
+		}
+		sum, n := 0.0, 0
+		for t := t0 + 2000; t <= tEnd && u.alive(t); t += 500 {
+			vm, pm := m.vel(t), m.pos(t)
+			sp := math.Hypot(vm[0], vm[2])
+			if sp < 100 {
+				continue
+			}
+			pt, vt := u.pos(t), u.vel(t)
+			rx, rz := pt[0]-pm[0], pt[2]-pm[2]
+			// time to collision: |r + vt·τ| = sp·τ
+			a := vt[0]*vt[0] + vt[2]*vt[2] - sp*sp
+			b := 2 * (rx*vt[0] + rz*vt[2])
+			c := rx*rx + rz*rz
+			tau := -1.0
+			if math.Abs(a) < 1e-6 {
+				if b < 0 {
+					tau = -c / b
+				}
+			} else if d := b*b - 4*a*c; d >= 0 {
+				for _, x := range []float64{(-b - math.Sqrt(d)) / (2 * a), (-b + math.Sqrt(d)) / (2 * a)} {
+					if x > 0 && (tau < 0 || x < tau) {
+						tau = x
+					}
+				}
+			}
+			if tau < 0 {
+				continue // cannot catch it: this pair says nothing
+			}
+			cx, cz := rx+vt[0]*tau, rz+vt[2]*tau
+			ang := math.Abs(math.Mod(math.Atan2(cx, cz)-math.Atan2(vm[0], vm[2])+3*math.Pi, 2*math.Pi)-math.Pi) * 180 / math.Pi
+			sum += ang
+			n++
+		}
+		if n < 4 {
+			continue
+		}
+		a := sum / float64(n)
+		if a < bestA {
+			best, bestA, second = u.ID, a, bestA
+		} else if a < second {
+			second = a
+		}
+	}
+	if best < 0 || bestA > maxDeg || second-bestA < marginDeg {
+		return -1, bestA
+	}
+	return best, bestA
+}
+
+// Thresholds from TestInferTarget on the reference matches: right 90% of the time
+// on launches whose target is known (v0.9.0).
+var inferMaxDeg, inferMarginDeg = 12.0, 6.0

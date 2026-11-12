@@ -10,6 +10,7 @@ export interface Settings {
   me: string;
   wingmen: string;            // comma-separated player names flown with (for 'me + wingman' Pk)
   pkScope: 'all' | 'self' | 'squad';
+  liveRecord: boolean;        // record own-ship telemetry from the game (localhost:8111) while the viewer is open
   units: 'metric' | 'aviation';
   labels: 'all' | 'focus' | 'off';
   lblName: boolean; lblType: boolean; lblAlt: boolean; lblSpeed: boolean;
@@ -20,6 +21,7 @@ export interface Settings {
   radar: 'off' | 'focus' | 'all';
   desig: 'off' | 'focus' | 'all';
   seeker: boolean;
+  activeMark: boolean;        // mark where active-radar missiles switched on their seeker
   msKeep: 'all' | 'focus' | 'off';   // finished missile paths
   shade: boolean; grid: boolean;
   view: '3d' | '2d';
@@ -99,6 +101,15 @@ function wingOf(hd: number, pd: number, rd: number): number[] {
   return [rx, ry, -rz, uy0 * cr];
 }
 
+// diamond outline: where an active-radar missile switched on its own seeker
+function diamondTexture(): THREE.Texture {
+  const c = document.createElement('canvas'); c.width = c.height = 32;
+  const x = c.getContext('2d')!;
+  x.strokeStyle = '#fff'; x.lineWidth = 4; x.lineJoin = 'round';
+  x.beginPath(); x.moveTo(16, 3); x.lineTo(29, 16); x.lineTo(16, 29); x.lineTo(3, 16); x.closePath(); x.stroke();
+  return new THREE.CanvasTexture(c);
+}
+
 function crossTexture(): THREE.Texture {
   const c = document.createElement('canvas'); c.width = c.height = 32;
   const x = c.getContext('2d')!;
@@ -129,7 +140,8 @@ export class Viewer {
   private acGeo = aircraftGeometry();
   private msGeo: THREE.BufferGeometry;
   private beamGeo: THREE.BufferGeometry;
-  private cmPts!: THREE.Points; private bombPts!: THREE.Points; private groundPts!: THREE.Points; private deadPts!: THREE.Points;
+  private cmPts!: THREE.Points; private bombPts!: THREE.Points; private groundPts!: THREE.Points; private deadPts!: THREE.Points; private activePts!: THREE.Points;
+  private activeAt = new Map<number, number>(); // missile id -> sample index where an ARH seeker went active
   private sticks!: Segments; private desig!: Segments; private seeker!: Segments;
   private measureSeg!: Segments; private vectors!: Segments; private dlzSeg!: Segments;
   res = new THREE.Vector2(800, 600);
@@ -272,6 +284,12 @@ export class Viewer {
     this.bombPts = mkPts(this.byKind.bomb.length, 4.5);
     this.groundPts = mkPts(this.byKind.ground.length, 5);
     this.deadPts = mkPts(this.byKind.aircraft.length, 11, crossTexture());
+    this.activeAt.clear();
+    for (const v of this.byKind.missile) {
+      const u = v.u; if (!u.seekerMode || !u.missile || u.missile.guidance !== 'ARH') continue;
+      const i = Array.from(u.seekerMode).indexOf(2); if (i >= 0) this.activeAt.set(u.id, i);
+    }
+    this.activePts = mkPts(Math.max(1, this.activeAt.size), 13, diamondTexture());
 
     const mkSeg = (cap: number, width: number, opacity: number) => {
       const sg = new Segments(cap, width, opacity); sg.mat.uniforms.uRes.value = this.res; this.root.add(sg.mesh); return sg;
@@ -732,6 +750,20 @@ export class Viewer {
     this.sticks.end(); this.sticks.mesh.visible = st.sticks && !is2d;
     this.desig.end(); this.vectors.end();
     this.deadPts.geometry.setDrawRange(0, nDead); deadPos.needsUpdate = true; deadCol.needsUpdate = true;
+
+    // where active-radar missiles went active ("pitbull"), shown with the missile's path
+    {
+      const ap = this.activePts.geometry.getAttribute('position') as THREE.BufferAttribute, acol = this.activePts.geometry.getAttribute('color') as THREE.BufferAttribute;
+      let n = 0;
+      if (st.activeMark && st.missiles) for (const v of this.byKind.missile) {
+        const i = this.activeAt.get(v.u.id); const u = v.u;
+        if (i === undefined || t < u.t[i] || this.playerHidden(u)) continue;
+        const ended = t > u.tEnd;
+        if (ended && !(st.msKeep === 'all' || (st.msKeep === 'focus' && v.focus) || t - u.tEnd < 4000)) continue;
+        ap.setXYZ(n, u.x[i], u.y[i], -u.z[i]); acol.setXYZ(n, 0.45, 1, 0.55); n++;
+      }
+      this.activePts.geometry.setDrawRange(0, n); ap.needsUpdate = true; acol.needsUpdate = true;
+    }
 
     // missile seeker lines (only while the seeker is tracking)
     this.seeker.begin();

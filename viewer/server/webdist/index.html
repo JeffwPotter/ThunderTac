@@ -20,6 +20,7 @@
   <div class="brand">WT Replay Viewer</div>
   <select id="session" title="Match"></select>
   <button id="btnFetch" title="Download a match from the War Thunder replay server by its session ID">+ Add match</button>
+  <div id="liveBadge" hidden title="Recording your flight data from the game (localhost:8111)"></div>
   <div id="matchInfo"></div>
   <div class="spacer"></div>
   <div class="group"><button id="btnDebrief" title="Your mistakes, shots and defence in this match">Debrief</button><button id="btnLibrary" title="All your matches: trends, Pk, heatmaps">Library</button></div>
@@ -71,12 +72,16 @@
     <h4>Weapons</h4>
     <label class="chk"><input type="checkbox" data-set="missiles"> Missiles</label>
     <label class="chk"><input type="checkbox" data-set="seeker"> Missile seeker lock lines</label>
+    <label class="chk" title="A green diamond where an active-radar missile (AIM-120, R-77, …) switched on its own seeker"><input type="checkbox" data-set="activeMark"> Mark where active missiles went active</label>
     <label class="chk"><input type="checkbox" data-set="cms"> Flares and chaff</label>
     <label class="chk"><input type="checkbox" data-set="bombs"> Bombs</label>
     <h4>Radar</h4>
     <label class="row">Radar beams <select data-set="radar"><option value="all">All</option><option value="focus">Highlighted only</option><option value="off">Off</option></select></label>
     <label class="chk"><input type="checkbox" data-set="scanZone"> Radar scan zone (from game data)</label>
     <label class="row">Lock lines <select data-set="desig"><option value="all">All</option><option value="focus">Highlighted only</option><option value="off">Off</option></select></label>
+    <h4>Game telemetry</h4>
+    <label class="chk" title="While this viewer is open, record your own flight data (IAS, AoA, G, throttle, fuel) from War Thunder's local web server, and match it to your aircraft when the replay is converted."><input type="checkbox" data-set="liveRecord"> Record my flight data while I play</label>
+    <div class="fine" id="liveInfo"></div>
     <h4>Units</h4>
     <label class="chk"><input type="checkbox" data-set="ai"> AI aircraft</label>
     <label class="chk"><input type="checkbox" data-set="ground"> Ground units</label>

@@ -13,9 +13,9 @@ import (
 )
 
 type parityCase struct {
-	P                                  map[string]any `json:"p"`
-	SAlt, SSpd, TAlt, TSpd, Aspect     float64
-	Rmax, Rne                          float64
+	P                              map[string]any `json:"p"`
+	SAlt, SSpd, TAlt, TSpd, Aspect float64
+	Rmax, Rne                      float64
 }
 
 func parityPhys() []*missilePhys {

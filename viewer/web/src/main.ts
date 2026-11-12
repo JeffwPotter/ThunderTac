@@ -9,7 +9,7 @@ function el(tag: string, cls = '', text = ''): HTMLElement { const e = document.
 const hex = (n: number) => '#' + n.toString(16).padStart(6, '0');
 
 const DEFAULTS: Settings = {
-  me: 'spurzz', wingmen: '', pkScope: 'all', units: 'metric', labels: 'all', lblName: true, lblType: true, lblAlt: true, lblSpeed: false, missileLabels: true,
+  me: 'spurzz', wingmen: '', pkScope: 'all', liveRecord: false, activeMark: true, units: 'metric', labels: 'all', lblName: true, lblType: true, lblAlt: true, lblSpeed: false, missileLabels: true,
   acTrail: 30, msTrail: -1, missiles: true, cms: true, bombs: true, ground: true, ai: true, dead: false, sticks: true,
   radar: 'focus', desig: 'focus', seeker: true, msKeep: 'focus', view: '3d', scanZone: true, airfields: true, areas: false, trailStyle: 'ribbon', lineWidth: 2, vector: false, dlz: true, shade: true, grid: true,
 };
@@ -112,6 +112,7 @@ async function open(id: string) {
     ses = await loadSession(id, loading);
   } catch (e: any) { loading('Could not open this match.\n' + (e && e.message || e)); return; }
   viewer.setSession(ses);
+  loadOwnship(id);
   debrief.invalidate();
   if (!$('debrief').hidden) debrief.open();
   viewer.onSelect = (uid, shift) => select(uid, shift);
@@ -240,8 +241,10 @@ function renderSelected(rebuild: boolean) {
       const act = u.seekerMode ? Array.from(u.seekerMode).indexOf(2) : -1;
       debrief.energyChart(body, { missile: u.id, target: l && l.target !== undefined ? l.target : -1, activeT: act >= 0 ? u.t[act] : null });
     }
+    const charts: [string, string][] = [['alt', 'Altitude'], ['spd', 'Speed']];
+    if (own.has(u.id)) charts.push(['oG', 'G (from your game)'], ['oAoA', 'Angle of attack (from your game)'], ['oIAS', 'Indicated airspeed (from your game)']);
     if (u.kind === 'aircraft' || u.kind === 'missile') {
-      for (const [key, cap] of [['alt', 'Altitude'], ['spd', 'Speed']] as const) {
+      for (const [key, cap] of charts) {
         const c = el('div', 'chart'); const capEl = el('div', 'cap'); capEl.append(el('span', '', cap), el('span', '', '')); capEl.id = 'cap-' + key;
         const cv = document.createElement('canvas'); cv.id = 'chart-' + key;
         cv.onclick = ev => { const r = cv.getBoundingClientRect(); seek(u.tStart + (u.tEnd - u.tStart) * (ev.clientX - r.left) / r.width); };
@@ -271,6 +274,13 @@ function renderSelected(rebuild: boolean) {
     const lockedBy: string[] = [];
     for (const o of ses.units) { if (o.kind !== 'aircraft' || !o.radar || o.id === u.id) continue; const rr = radarAt(o, tt); if (rr && rr.targets.includes(u.id) && tt >= o.tStart && tt <= o.tEnd) lockedBy.push(unitTitle(o)); }
     if (lockedBy.length) add('Locked by', lockedBy.join(', '), true);
+    const ol = own.get(u.id);
+    if (ol && tt >= ol.T[0] && tt <= ol.T[ol.T.length - 1]) {
+      const i = ownIdx(ol, tt);
+      add('From your game', 'IAS ' + fmtSpeed(ol.IAS[i] / 3.6, settings.units) + ' · AoA ' + ol.AoA[i].toFixed(1) + '° · G ' + ol.Ny[i].toFixed(1), true);
+      add('Throttle', Math.round(ol.Throttle[i]) + '%'); add('Fuel', Math.round(ol.Fuel[i]) + ' kg' + (ol.FuelMax[i] > 0 ? ' (' + Math.round(100 * ol.Fuel[i] / ol.FuelMax[i]) + '%)' : ''));
+      add('Matched', 'clock offset ' + (ol.offsetMs / 1000).toFixed(2) + ' s · fit ' + ol.correlation.toFixed(2) + ' · height error ' + ol.rmseAltM.toFixed(0) + ' m', true);
+    }
     const ps = u.owner >= 0 ? ses.stats.get(u.owner) : null;
     if (ps) {
       add('Flight time (match)', fmtClock(ps.flightTimeS * 1000)); add('Distance flown', fmtDist(ps.distanceKm * 1000, settings.units));
@@ -295,7 +305,66 @@ function renderSelected(rebuild: boolean) {
   }
   drawChart('alt', u, (i) => u.y[i], v => fmtAlt(v, settings.units));
   drawChart('spd', u, (i) => speedIdx(u, i), v => fmtSpeed(v, settings.units));
+  const ol2 = own.get(u.id);
+  if (ol2) {
+    drawOwnChart('oG', ol2, ol2.Ny, u, v => v.toFixed(1) + ' G');
+    drawOwnChart('oAoA', ol2, ol2.AoA, u, v => v.toFixed(0) + '°');
+    drawOwnChart('oIAS', ol2, ol2.IAS, u, v => fmtSpeed(v / 3.6, settings.units));
+  }
 }
+// ---------- own-ship telemetry from the game (live.go) ----------
+interface OwnLife { unit: number; aircraft: string; offsetMs: number; correlation: number; rmseAltM: number; overlapS: number;
+  T: number[]; IAS: number[]; TAS: number[]; Mach: number[]; Alt: number[]; Vy: number[]; AoA: number[]; AoS: number[]; Ny: number[]; Wx: number[]; Throttle: number[]; Fuel: number[]; FuelMax: number[]; }
+let own = new Map<number, OwnLife>();
+async function loadOwnship(id: string) {
+  own = new Map();
+  try {
+    const r = await fetch('/api/ownship/' + id + '?me=' + encodeURIComponent(settings.me || ''));
+    const j = await r.json();
+    if (!ses || ses.id !== id) return;
+    for (const l of j.lives || []) own.set(l.unit, l);
+    if (own.size) renderSelected(true);
+  } catch (e) { /* none */ }
+}
+function ownIdx(l: OwnLife, tt: number): number {
+  let lo = 0, hi = l.T.length - 1;
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (l.T[m] <= tt) lo = m; else hi = m - 1; }
+  return lo;
+}
+function drawOwnChart(key: string, l: OwnLife, vals: number[], u: Unit, fmt: (v: number) => string, color = '#ffb347') {
+  const cv = document.getElementById('chart-' + key) as HTMLCanvasElement | null; if (!cv) return;
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight; if (!w) return;
+  if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const x = cv.getContext('2d')!; x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, w, h);
+  let lo = Infinity, hi = -Infinity; for (const v of vals) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  if (!isFinite(lo)) return; if (hi - lo < 1) hi = lo + 1;
+  const X = (tt: number) => (tt - u.tStart) / Math.max(1, u.tEnd - u.tStart) * w, Y = (v: number) => h - 5 - (v - lo) / (hi - lo) * (h - 10);
+  const step = Math.max(1, Math.floor(vals.length / w));
+  x.strokeStyle = color; x.lineWidth = 1.5; x.lineJoin = 'round'; x.beginPath();
+  for (let i = 0; i < vals.length; i += step) { const px = X(l.T[i]), py = Y(vals[i]); if (i === 0) x.moveTo(px, py); else x.lineTo(px, py); }
+  x.stroke();
+  const tt = Math.min(Math.max(t, u.tStart), u.tEnd), i = ownIdx(l, tt);
+  x.strokeStyle = 'rgba(255,255,255,.55)'; x.lineWidth = 1; x.beginPath(); x.moveTo(X(tt), 0); x.lineTo(X(tt), h); x.stroke();
+  x.fillStyle = '#fff'; x.beginPath(); x.arc(X(tt), Y(vals[i]), 3, 0, 7); x.fill();
+  const cap = document.getElementById('cap-' + key); if (cap) (cap.lastChild as HTMLElement).textContent = fmt(lo) + ' – ' + fmt(hi);
+}
+async function setLive(on: boolean) {
+  try { await fetch('/api/live?on=' + (on ? 1 : 0), { method: 'POST' }); } catch (e) { /* ignore */ }
+  pollLive();
+}
+async function pollLive() {
+  const b = $('liveBadge'), info = $('liveInfo');
+  try {
+    const s = await (await fetch('/api/live')).json();
+    b.hidden = !s.on; b.classList.toggle('rec', !!s.recording);
+    b.textContent = s.recording ? '● REC ' + s.aircraft : s.error ? 'Game not found' : 'Waiting for the game';
+    info.textContent = !s.on ? 'Off. When on, keep this viewer open while you play; each flight is saved in sessions\\live.'
+      : s.recording ? 'Recording ' + s.aircraft + ' (' + s.samples + ' samples).' + (s.savedThisSession ? ' ' + s.savedThisSession + ' flight(s) saved.' : '')
+      : (s.error ? s.error + '. ' : 'Waiting for you to spawn. ') + (s.savedThisSession ? s.savedThisSession + ' flight(s) saved.' : '');
+  } catch (e) { /* ignore */ }
+}
+setInterval(() => { if (settings.liveRecord) pollLive(); }, 3000);
+
 function guidanceText(g: string): string { return ({ ARH: 'Active radar', SARH: 'Semi-active radar', IR: 'Infrared' } as any)[g] || g; }
 function speedIdx(u: Unit, i: number): number {
   if (u.speed) return u.speed[i];
@@ -489,6 +558,7 @@ function bindDisplay() {
     c.onchange = () => {
       (settings as any)[key] = c instanceof HTMLInputElement ? c.checked : (c.dataset.num ? Number(c.value) : c.value);
       save(); if (key === 'shade' || key === 'grid') viewer.paintTerrain();
+      if (key === 'liveRecord') setLive(!!settings.liveRecord);
     };
   }
 }
@@ -537,5 +607,6 @@ function frame(now: number) {
   }
   requestAnimationFrame(frame);
 }
+if (settings.liveRecord) setLive(true);
 (window as any).wtrv = { viewer, seek, select, showPage, debrief, library, get t() { return t; }, get ses() { return ses; }, play: togglePlay };
 boot();

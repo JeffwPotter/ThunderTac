@@ -4,6 +4,8 @@ html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink); 
 body { display: grid; grid-template: "top top top" 40px "left view right" 1fr "bar bar bar" 52px / 270px 1fr 290px; }
 button, select, input { font: inherit; color: var(--ink); background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; padding: 3px 8px; }
 button { cursor: pointer; } button:hover { background: #2c3646; } button.on { background: #3a4660; border-color: #5a6b8a; }
+#liveBadge { font-size: 12px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); color: var(--ink2, #a9b3c2); white-space: nowrap; }
+#liveBadge.rec { color: #fff; border-color: #c0392b; background: rgba(192,57,43,.35); }
 #top { grid-area: top; display: flex; align-items: center; gap: 10px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .brand { font-weight: 600; letter-spacing: .02em; }
 #session { max-width: 330px; }
@@ -157,3 +159,5 @@ button.on { background: #3a4660; border-color: #5a6b8a; }
 #fetchMsg { min-height: 18px; font-size: 13px; white-space: pre-wrap; }
 #fetchMsg.err { color: #ff8a7a; }
 .fbButtons { display: flex; gap: 8px; justify-content: flex-end; }
+#me, #wingmen { width: 92px; }
+#top .brand, #btnFetch, #btn2d { white-space: nowrap; }
