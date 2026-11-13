@@ -60,7 +60,7 @@
       "id": "missile_kills",
       "name": "Missile kills line up with a missile reaching the victim",
       "status": "pass",
-      "value": "23 of 23",
+      "value": "24 of 24",
       "expected": "at least 60%"
     },
     {

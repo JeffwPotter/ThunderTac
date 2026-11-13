@@ -437,7 +437,8 @@ func runACMIMain() (retErr error) {
 			header: replay.Header, directory: input.directory, results: replay.Results,
 			tracks: tracks, slot: slot, names: names, kills: kills.Kills, timeline: messageEvents,
 			cm: cmExport, radarLocks: radarExport, radarModes: radarModesExport, ecs: ecs,
-			airfields: airportMarkers,
+			airfields:   airportMarkers,
+			groundPoses: paths.GroundPoses, groundShots: paths.GroundShots,
 		})
 		if err != nil {
 			return fmt.Errorf("writing session file: %w", err)

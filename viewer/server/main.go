@@ -28,7 +28,7 @@ import (
 	"strings"
 )
 
-const version = "0.9.1"
+const version = "0.10.0"
 
 //go:embed webdist
 var webFS embed.FS
@@ -46,10 +46,12 @@ var sessionEntries = map[string]string{
 	"stats.json":    "application/json",
 	"results.json":  "application/json",
 	"tracks.bin":    "application/octet-stream",
+	"shots.json":    "application/json",
 }
 var terrainEntries = map[string]string{
 	"terrain.json": "application/json",
 	"height.u16":   "application/octet-stream",
+	"detail.u16":   "application/octet-stream",
 }
 
 type sessionInfo struct {

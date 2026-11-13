@@ -75,6 +75,11 @@
     <label class="chk" title="A green diamond where an active-radar missile (AIM-120, R-77, …) switched on its own seeker"><input type="checkbox" data-set="activeMark"> Mark where active missiles went active</label>
     <label class="chk"><input type="checkbox" data-set="cms"> Flares and chaff</label>
     <label class="chk"><input type="checkbox" data-set="bombs"> Bombs</label>
+    <h4>Ground battles</h4>
+    <label class="chk" title="Cannon rounds (larger than 14.7 mm): main guns and autocannon. Arcs are computed from the recorded gun direction and the shell's speed and drag from your game files."><input type="checkbox" data-set="shells"> Cannon shell arcs</label>
+    <label class="chk" title="Machine-gun rounds (14.7 mm and smaller), drawn thinner and amber"><input type="checkbox" data-set="mgRounds"> Machine-gun rounds</label>
+    <label class="row">Keep landed shells <select data-set="shellKeep" data-num="1"><option value="0">Only in flight</option><option value="3">3 s</option><option value="10">10 s</option><option value="30">30 s</option><option value="-1">Whole match</option></select></label>
+    <label class="row">Gun lines <select data-set="gunLines"><option value="all">All vehicles</option><option value="focus">Highlighted only</option><option value="off">Off</option></select></label>
     <h4>Radar</h4>
     <label class="row">Radar beams <select data-set="radar"><option value="all">All</option><option value="focus">Highlighted only</option><option value="off">Off</option></select></label>
     <label class="chk"><input type="checkbox" data-set="scanZone"> Radar scan zone (from game data)</label>
@@ -84,8 +89,8 @@
     <div class="fine" id="liveInfo"></div>
     <h4>Units</h4>
     <label class="chk"><input type="checkbox" data-set="ai"> AI aircraft</label>
-    <label class="chk"><input type="checkbox" data-set="ground"> Ground units</label>
-    <label class="chk"><input type="checkbox" data-set="dead"> Destroyed aircraft (marker and path)</label>
+    <label class="chk"><input type="checkbox" data-set="ground"> Ground units and vehicles</label>
+    <label class="chk"><input type="checkbox" data-set="dead"> Destroyed aircraft and vehicles (marker and path)</label>
     <label class="chk"><input type="checkbox" data-set="sticks"> Altitude lines to ground</label>
     <label class="chk"><input type="checkbox" data-set="vector"> Speed vector (10 s ahead)</label>
     <label class="chk"><input type="checkbox" data-set="dlz"> Launch-zone rings for the selected aircraft</label>
@@ -93,13 +98,14 @@
     <label class="chk"><input type="checkbox" data-set="airfields"> Airfields</label>
     <label class="chk"><input type="checkbox" data-set="areas"> Mission areas (border, airfield zones)</label>
     <label class="chk"><input type="checkbox" data-set="shade"> Hill shading</label>
-    <label class="chk"><input type="checkbox" data-set="grid"> 10 km grid</label>
+    <label class="chk"><input type="checkbox" data-set="grid"> Grid (10 km; 250 m in the tank battle area)</label>
     <div class="legend">
       <span><i style="background:#ffe14d"></i>Me</span><span><i style="background:#4da3ff"></i>My team</span><span><i style="background:#ff6a3d"></i>Enemy</span><span><i style="background:#a8b0bc"></i>AI / neutral</span>
       <span><i style="background:#ffd24a" class="dot"></i>Flare</span><span><i style="background:#d5dde6" class="dot"></i>Chaff</span>
+      <span><i style="background:#ffd27a"></i>Machine-gun rounds</span><span><i style="background:#ff4040" class="dot"></i>Kill hit</span>
     </div>
   </div>
-  <div class="tab" id="tab-selected" hidden><div id="selBody" class="muted">Click an aircraft or a missile.</div></div>
+  <div class="tab" id="tab-selected" hidden><div id="selBody" class="muted">Click an aircraft, vehicle or missile.</div></div>
   <div class="tab" id="tab-events" hidden>
     <label class="row">Show <select id="evKind"><option value="kills">Shoot-downs</option><option value="shots">Missile shots</option></select></label>
     <label class="chk"><input type="checkbox" id="evMine"> Only mine (by me or at me)</label>

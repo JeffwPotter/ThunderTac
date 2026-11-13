@@ -1,4 +1,4 @@
-import { loadSession, Session, Unit, Player, GameEvent, sampleAt, radarAt, lerpCol, idxAt, fmtClock, Sample, outcomeText } from './data';
+import { loadSession, Session, Unit, Player, GameEvent, Shot, sampleAt, radarAt, lerpCol, idxAt, fmtClock, Sample, outcomeText, shellLabel } from './data';
 import { Viewer, Settings, COLORS, fmtAlt, fmtSpeed, fmtDist } from './scene';
 import { Debrief } from './debrief';
 import { Library } from './library';
@@ -12,6 +12,7 @@ const DEFAULTS: Settings = {
   me: 'spurzz', wingmen: '', pkScope: 'all', liveRecord: false, activeMark: true, units: 'metric', labels: 'all', lblName: true, lblType: true, lblAlt: true, lblSpeed: false, missileLabels: true,
   acTrail: 30, msTrail: -1, missiles: true, cms: true, bombs: true, ground: true, ai: true, dead: false, sticks: true,
   radar: 'focus', desig: 'focus', seeker: true, msKeep: 'focus', view: '3d', scanZone: true, airfields: true, areas: false, trailStyle: 'ribbon', lineWidth: 2, vector: false, dlz: true, shade: true, grid: true,
+  shells: true, mgRounds: true, shellKeep: 3, gunLines: 'focus',
 };
 const settings: Settings = Object.assign({}, DEFAULTS);
 try { Object.assign(settings, JSON.parse(localStorage.getItem('wtrv.settings') || '{}')); } catch (e) { /* first run */ }
@@ -27,7 +28,7 @@ const tmp2: Sample = { x: 0, y: 0, z: 0, heading: 0, pitch: 0, roll: 0, i: 0, f:
 // ---------- helpers ----------
 function playerOf(u: Unit): Player | null { return ses && u.owner >= 0 ? ses.playerBySlot.get(u.owner) || null : null; }
 function unitTitle(u: Unit): string {
-  const p = u.kind === 'aircraft' ? playerOf(u) : null;
+  const p = u.kind === 'aircraft' || u.kind === 'ground' ? playerOf(u) : null;
   return p ? p.name : (u.ai ? u.name + ' (AI)' : u.name);
 }
 // the aircraft a player is flying at time tt (or the nearest one in time)
@@ -44,6 +45,7 @@ function unitOfPlayer(p: Player, tt: number): Unit | null {
 function weaponName(e: GameEvent): string {
   if (e.missile !== undefined && ses!.units[e.missile]) return ses!.units[e.missile].name;
   const w = String(e.weapon || ''); if (!w) return '';
+  if (/^\d+(\.\d+)?mm_/i.test(w) || /ball/i.test(w)) return shellLabel(w);
   return w.replace(/^[a-z]{2,3}_/, '').replace(/_/g, ' ').toUpperCase();
 }
 
@@ -163,9 +165,10 @@ function buildPlayers() {
       const mid = el('div');
       mid.appendChild(el('div', 'nm', p.name));
       const u0 = ses.units[p.units[0]];
-      mid.appendChild(el('div', 'ac', u0 ? u0.name : 'did not fly'));
+      mid.appendChild(el('div', 'ac', u0 ? [...new Set(p.units.map(id => ses!.units[id].name))].join(', ') : (ses.ground ? 'did not play' : 'did not fly')));
       const r = p.results;
-      const kd = el('div', 'kd', (r.kills || 0) + ' / ' + (r.deaths || 0)); kd.title = 'Air kills / deaths';
+      const kd = el('div', 'kd', ses.ground ? ((r.groundKills || 0) + (r.kills || 0)) + ' / ' + (r.deaths || 0) : (r.kills || 0) + ' / ' + (r.deaths || 0));
+      kd.title = ses.ground ? 'Kills (ground + air) / deaths' : 'Air kills / deaths';
       row.append(eye, star, mid, kd);
       row.onclick = () => { const u = unitOfPlayer(p, t); if (u) select(u.id, false); };
       row.ondblclick = () => { const u = unitOfPlayer(p, t); if (u) { select(u.id, false); viewer.setFollow(u.id); syncFollowBtn(); } };
@@ -218,14 +221,14 @@ function syncFollowBtn() { renderSelected(true); $('btnFollow').classList.toggle
 let selBuiltFor = -2;
 function renderSelected(rebuild: boolean) {
   const body = $('selBody');
-  if (!ses || viewer.selected < 0) { if (selBuiltFor !== -1) { body.className = 'muted'; body.textContent = 'Click an aircraft or a missile.'; selBuiltFor = -1; } return; }
+  if (!ses || viewer.selected < 0) { if (selBuiltFor !== -1) { body.className = 'muted'; body.textContent = 'Click an aircraft, vehicle or missile.'; selBuiltFor = -1; } return; }
   const u = ses.units[viewer.selected];
   if (rebuild || selBuiltFor !== u.id) {
     selBuiltFor = u.id; body.className = ''; body.innerHTML = '';
     const p = playerOf(u);
-    body.appendChild(el('div', 'selName', u.kind === 'aircraft' ? unitTitle(u) : u.name));
+    body.appendChild(el('div', 'selName', u.kind === 'aircraft' || u.kind === 'ground' ? unitTitle(u) : u.name));
     let sub = '';
-    if (u.kind === 'aircraft') sub = u.name + (p && p.clan ? ' · ' + p.clan : '');
+    if (u.kind === 'aircraft' || (u.kind === 'ground' && p)) sub = u.name + (p && p.clan ? ' · ' + p.clan : '');
     else if (u.kind === 'missile') { const par = u.parent >= 0 ? ses.units[u.parent] : null; sub = (u.missile && u.missile.guidance ? guidanceText(u.missile.guidance) + ' · ' : '') + (par ? 'launched by ' + unitTitle(par) : ''); }
     body.appendChild(el('div', 'selSub', sub));
     const btns = el('div', 'btnRow');
@@ -244,7 +247,8 @@ function renderSelected(rebuild: boolean) {
     }
     const charts: [string, string][] = [['alt', 'Altitude'], ['spd', 'Speed']];
     if (own.has(u.id)) charts.push(['oG', 'G (from your game)'], ['oAoA', 'Angle of attack (from your game)'], ['oIAS', 'Indicated airspeed (from your game)']);
-    if (u.kind === 'aircraft' || u.kind === 'missile') {
+    if (u.kind === 'ground') charts.splice(0, 1);   // speed only
+    if (u.kind === 'aircraft' || u.kind === 'missile' || u.kind === 'ground') {
       for (const [key, cap] of charts) {
         const c = el('div', 'chart'); const capEl = el('div', 'cap'); capEl.append(el('span', '', cap), el('span', '', '')); capEl.id = 'cap-' + key;
         const cv = document.createElement('canvas'); cv.id = 'chart-' + key;
@@ -262,6 +266,7 @@ function renderSelected(rebuild: boolean) {
   sampleAt(u, tt, tmp);
   const spd = u.speed ? lerpCol(u.speed, tmp, u.n) : speedOf(u, tt);
   const mach = u.mach ? lerpCol(u.mach, tmp, u.n) : NaN, agl = u.agl ? lerpCol(u.agl, tmp, u.n) : NaN;
+  if (u.kind === 'ground') { groundPanel(u, tt, spd, add); drawChart('spd', u, (i) => speedIdx(u, i), v => fmtSpeed(v, settings.units)); return; }
   add('Altitude', fmtAlt(tmp.y, settings.units) + (isFinite(agl) ? ' (' + fmtAlt(Math.max(0, agl), settings.units) + ' above ground)' : ''), isFinite(agl));
   add('Speed', fmtSpeed(spd, settings.units)); if (isFinite(mach)) add('Mach', mach.toFixed(2));
   if (u.kind === 'aircraft') {
@@ -313,6 +318,49 @@ function renderSelected(rebuild: boolean) {
     drawOwnChart('oIAS', ol2, ol2.IAS, u, v => fmtSpeed(v / 3.6, settings.units));
   }
 }
+// ---------- ground vehicle ----------
+const CLASS_TEXT: { [k: string]: string } = { cannon: 'Cannon', mg: 'Machine gun', atgm: 'Missile launcher', smoke: 'Smoke', unknown: 'Other' };
+function groundPanel(u: Unit, tt: number, spd: number, add: (k: string, v: string, wide?: boolean) => void) {
+  add('Speed', fmtSpeed(spd, settings.units));
+  add('Hull heading', String(Math.round((tmp.heading + 360) % 360)).padStart(3, '0') + '°');
+  if (u.pitch && isFinite(tmp.pitch)) add('Hull tilt', 'pitch ' + tmp.pitch.toFixed(0) + '° · roll ' + tmp.roll.toFixed(0) + '°');
+  if (u.gunBearing) {
+    const i = idxAt(u, tt), gb = u.gunBearing[i];
+    if (isFinite(gb)) {
+      const rel = ((gb - tmp.heading + 540) % 360) - 180;
+      add('Gun', String(Math.round((gb + 360) % 360)).padStart(3, '0') + '° · ' + (Math.abs(rel) < 3 ? 'straight ahead' : Math.round(Math.abs(rel)) + '° ' + (rel > 0 ? 'right' : 'left')) +
+        (u.gunElev && isFinite(u.gunElev[i]) ? ' · elevation ' + u.gunElev[i].toFixed(1) + '°' : ''), true);
+    }
+  }
+  const shots = ses!.shots ? ses!.shots.byUnit.get(u.id) || [] : [];
+  if (!shots.length) return;
+  // per weapon: rounds fired so far, last shell, reload
+  const byW = new Map<number, Shot[]>();
+  for (const s of shots) { if (s.t > tt) break; let l = byW.get(s.weapon); if (!l) { l = []; byW.set(s.weapon, l); } l.push(s); }
+  const ws = [...byW.keys()].sort((a, b) => a - b);
+  for (const w of ws) {
+    const l = byW.get(w)!, last = l[l.length - 1];
+    const ready = last.t + last.reloadS * 1000;
+    const name = CLASS_TEXT[last.cls] + (last.caliberMm ? ' ' + (last.caliberMm < 20 ? last.caliberMm.toFixed(1) : Math.round(last.caliberMm)) + ' mm' : '');
+    let v = l.length + (last.cls === 'mg' ? ' bursts' : ' shots');
+    if (last.cls !== 'mg' && last.cls !== 'smoke') {
+      v += ' · last ' + (last.shell ? shellLabel(last.shell) + (last.shellSource === 'guess' ? ' (guessed)' : '') : '?');
+      if (last.reloadS >= 1) v += tt < ready ? ' · reloading, ready in ' + ((ready - tt) / 1000).toFixed(1) + ' s' : ' · ready';
+      else if (last.reloadS > 0) v += ' · ' + Math.round(60 / last.reloadS) + ' rounds/min';
+      if (last.ammoLeft >= 0) v += ' · ' + last.ammoLeft + ' of that round left';
+    }
+    add(name, v, true);
+  }
+  const kills = shots.filter(s => s.kill && s.t <= tt).length;
+  if (kills) add('Kills by its shots (so far)', String(kills));
+  const last = shots.filter(s => s.t <= tt && s.cls === 'cannon').pop();
+  if (last) {
+    const tgt = last.hit >= 0 ? ses!.units[last.hit] : null;
+    const res = last.kill ? 'killed ' + (tgt ? unitTitle(tgt) : '?') : last.end === 'vehicle' && tgt ? 'arc reaches ' + unitTitle(tgt) : last.end === 'ground' ? 'arc lands on the ground' : last.end === 'range' ? 'flew out of range' : '—';
+    add('Last cannon shot', fmtClock(last.t - ses!.t0) + ' · ' + res + (last.elevAdj ? ' (arc fitted to the target, ' + last.elevAdj.toFixed(2) + '°)' : ''), true);
+  }
+}
+
 // ---------- own-ship telemetry from the game (live.go) ----------
 interface OwnLife { unit: number; aircraft: string; offsetMs: number; correlation: number; rmseAltM: number; overlapS: number;
   T: number[]; IAS: number[]; TAS: number[]; Mach: number[]; Alt: number[]; Vy: number[]; AoA: number[]; AoS: number[]; Ny: number[]; Wx: number[]; Throttle: number[]; Fuel: number[]; FuelMax: number[]; }
@@ -441,7 +489,7 @@ function buildEvents() {
   let n = 0;
   for (const e of ses.kills) {
     const vU = e.victim !== undefined ? ses.units[e.victim] : null; const kU = e.killer !== undefined ? ses.units[e.killer] : null;
-    if (!vU || vU.kind !== 'aircraft') continue;
+    if (!vU || (vU.kind !== 'aircraft' && !(ses.ground && vU.kind === 'ground' && vU.player >= 0))) continue;
     const kSlot = e.killerPlayer !== undefined ? e.killerPlayer : (kU ? kU.owner : -1);
     const mine = me >= 0 && kSlot === me, lost = me >= 0 && vU.owner === me;
     if (onlyMine && !mine && !lost) continue;
@@ -452,12 +500,15 @@ function buildEvents() {
     const line = el('div'); line.textContent = (kName ? kName + ' → ' : 'Lost: ') + unitTitle(vU);
     if (e.teamKill) line.appendChild(el('span', 'tk', '  team kill'));
     mid.appendChild(line);
-    const w = weaponName(e); mid.appendChild(el('div', 'wp', (kU ? kU.name + ' · ' : '') + (w || 'crash / unknown') + ' → ' + vU.name));
+    const w = weaponName(e);
+    let rng = '';
+    if (kU && vU.kind === 'ground') { sampleAt(kU, e.t, tmp); sampleAt(vU, e.t, tmp2); rng = ' · ' + Math.round(Math.hypot(tmp.x - tmp2.x, tmp.z - tmp2.z)) + ' m'; }
+    mid.appendChild(el('div', 'wp', (kU ? kU.name + ' · ' : '') + (w || 'crash / unknown') + ' → ' + vU.name + rng));
     row.appendChild(mid);
     row.onclick = () => { seek(e.t - 8000); select(e.missile !== undefined ? e.missile : vU.id, false); };
     host.appendChild(row); n++;
   }
-  if (!n) host.appendChild(el('div', 'muted', 'No shoot-downs to show.'));
+  if (!n) host.appendChild(el('div', 'muted', ses.ground ? 'No kills to show.' : 'No shoot-downs to show.'));
 }
 
 // ---------- timeline ----------
@@ -482,6 +533,8 @@ function drawStrip() {
   x.fillStyle = '#fff'; x.beginPath(); x.arc(X(t), mid, 6, 0, 7); x.fill();
 }
 function seek(tt: number) { if (!ses) return; t = Math.min(ses.t1, Math.max(ses.t0, tt)); uiTick(true); }
+// test hook (used by automated checks; harmless): seek to a replay time, select a unit
+(window as any).wtrvTest = { seek: (ms: number) => seek(ms), select: (id: number) => select(id, false), viewer: () => viewer, ses: () => ses };
 function setPlayIcon() { $('play').textContent = playing ? '❚❚' : '▶'; }
 function bindBar() {
   const sp = $('speed') as HTMLSelectElement;

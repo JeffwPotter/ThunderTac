@@ -33,6 +33,11 @@ type wtrTerrain struct {
 	hMin, hMax, water    float64
 	h                    []uint16
 	level, source, fname string
+	// optional 2 m grid of the tank battle area (terrain schema 2)
+	dn, dm          int
+	dx0, dz0, dcell float64
+	dhMin, dhMax    float64
+	dh              []uint16
 }
 
 func wtrLoadTerrain(level string) *wtrTerrain {
@@ -64,7 +69,13 @@ func wtrLoadTerrain(level string) *wtrTerrain {
 		HMin       float64 `json:"hMin"`
 		HMax       float64 `json:"hMax"`
 		WaterLevel float64 `json:"waterLevel"`
+		Detail     *struct {
+			W, H          int
+			X0, Z0, CellM float64
+			HMin, HMax    float64
+		} `json:"detail"`
 	}
+	var detailRaw []byte
 	for _, f := range zr.File {
 		rc, err := f.Open()
 		if err != nil {
@@ -80,6 +91,8 @@ func wtrLoadTerrain(level string) *wtrTerrain {
 			if json.Unmarshal(raw, &meta) != nil {
 				return nil
 			}
+		case "detail.u16":
+			detailRaw = raw
 		case "height.u16":
 			t.h = make([]uint16, len(raw)/2)
 			for i := range t.h {
@@ -91,7 +104,31 @@ func wtrLoadTerrain(level string) *wtrTerrain {
 	if t.n <= 1 || len(t.h) != t.n*t.n || t.cell <= 0 {
 		return nil
 	}
+	if d := meta.Detail; d != nil && d.W > 1 && d.H > 1 && d.CellM > 0 && len(detailRaw) == 2*d.W*d.H {
+		t.dn, t.dm, t.dx0, t.dz0, t.dcell, t.dhMin, t.dhMax = d.W, d.H, d.X0, d.Z0, d.CellM, d.HMin, d.HMax
+		t.dh = make([]uint16, d.W*d.H)
+		for i := range t.dh {
+			t.dh[i] = binary.LittleEndian.Uint16(detailRaw[i*2:])
+		}
+	}
 	return t
+}
+
+// heightFine uses the 2 m tank-area grid where there is one and the whole-map
+// grid elsewhere. Aircraft rules keep using height (unchanged behaviour).
+func (t *wtrTerrain) heightFine(x, z float64) float64 {
+	if t.dh != nil {
+		fx := (x - t.dx0) / t.dcell
+		fz := (z - t.dz0) / t.dcell
+		if fx >= 0 && fz >= 0 && fx < float64(t.dn-1) && fz < float64(t.dm-1) {
+			ix, iz := int(fx), int(fz)
+			ax, az := fx-float64(ix), fz-float64(iz)
+			at := func(c, r int) float64 { return t.dhMin + float64(t.dh[r*t.dn+c])*(t.dhMax-t.dhMin)/65535 }
+			v := (at(ix, iz)*(1-ax)+at(ix+1, iz)*ax)*(1-az) + (at(ix, iz+1)*(1-ax)+at(ix+1, iz+1)*ax)*az
+			return math.Max(v, t.water)
+		}
+	}
+	return t.height(x, z)
 }
 
 func (t *wtrTerrain) height(x, z float64) float64 {

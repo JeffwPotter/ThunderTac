@@ -36,6 +36,8 @@ export interface Unit {
   heading?: Float32Array;
   pitch?: Float32Array;
   roll?: Float32Array;
+  gunBearing?: Float32Array;  // ground vehicles: world bearing of the main gun, degrees (NaN unknown)
+  gunElev?: Float32Array;     // ground vehicles: gun elevation, degrees
   seekerMode?: Uint8Array;
   seekerKind?: Uint8Array;
   seekerRange?: Float32Array;
@@ -54,7 +56,8 @@ export interface Player {
   name: string;
   clan: string;
   team: number;
-  units: number[];
+  units: number[];      // everything the player drove or flew, in time order
+  vehicles: number[];   // ground vehicles only
   results: any;
   hidden: boolean;
   highlight: boolean;
@@ -66,6 +69,30 @@ export interface Terrain {
   n: number; x0: number; z0: number; x1: number; z1: number; cell: number;
   hMin: number; hMax: number; water: number;
   h: Float32Array;   // n*n, rows south to north
+  detail: TerrainDetail | null;   // 2 m grid of a tank battle area (terrain schema 2)
+}
+
+export interface TerrainDetail {
+  w: number; h: number; x0: number; z0: number; cell: number; hMin: number; hMax: number;
+  v: Float32Array;   // w*h, rows south to north; samples at x0 + col*cell
+}
+
+// One weapon firing of a ground vehicle (shots.json). The arc is computed by
+// the decoder (gun direction at firing, shell figures from the game files).
+export interface Shot {
+  t: number; unit: number; weapon: number;
+  cls: 'cannon' | 'mg' | 'atgm' | 'smoke' | 'unknown';
+  caliberMm: number; weaponName: string; shell: string; shellType: string; shellSource: string;
+  ammoSlot: number; ammoLeft: number; reloadS: number; speedMs: number;
+  bearing: number; elev: number; elevAdj: number;
+  p0: number; n: number; tEnd: number; end: string; hit: number; kill: boolean; missM: number;
+}
+
+export interface Shots {
+  dt: number;                  // ms between arc points
+  x: Float32Array; y: Float32Array; z: Float32Array;
+  list: Shot[];                // by fire time
+  byUnit: Map<number, Shot[]>;
 }
 
 export interface Session {
@@ -85,6 +112,8 @@ export interface Session {
   t1: number;
   terrain: Terrain | null;
   levelName: string;
+  shots: Shots | null;
+  ground: boolean;   // a ground battle (player-driven ground vehicles)
 }
 
 const GLYPHS = /[␀-➿-]/g;
@@ -139,6 +168,7 @@ export async function loadSession(id: string, progress: (s: string) => void): Pr
       destroyed: !!u.destroyed, estimated: !!u.estimated, isStatic: !!u.static, n: u.samples,
       t: col('t'), x: col('x'), y: col('y'), z: col('z'),
       heading: col('heading'), pitch: col('pitch'), roll: col('roll'),
+      gunBearing: col('gunBearing'), gunElev: col('gunElev'),
       seekerMode: col('seekerMode'), seekerKind: col('seekerKind'), seekerRange: col('seekerRange'),
       tex: col('targetEstX'), tey: col('targetEstY'), tez: col('targetEstZ'),
       missile: u.missile, cmType: u.countermeasure ? u.countermeasure.type : undefined,
@@ -150,6 +180,7 @@ export async function loadSession(id: string, progress: (s: string) => void): Pr
 
   for (const u of units) {
     if (u.kind === 'aircraft') { u.owner = u.player; if (!u.speed) derive(u); }
+    else if (u.kind === 'ground' && u.player >= 0) { u.owner = u.player; if (!u.speed) derive(u, 6); }
   }
   for (const u of units) {
     if (u.kind !== 'aircraft' && u.parent >= 0 && units[u.parent]) {
@@ -159,8 +190,9 @@ export async function loadSession(id: string, progress: (s: string) => void): Pr
   }
 
   const players: Player[] = playersRaw.map((p: any) => ({
-    slot: p.slot, name: p.name, clan: p.clan || '', team: p.team, units: p.units || [],
-    results: p.results || {}, hidden: false, highlight: false,
+    slot: p.slot, name: p.name, clan: p.clan || '', team: p.team,
+    units: [...(p.units || []), ...(p.vehicles || [])].sort((a: number, b: number) => units[a].tStart - units[b].tStart),
+    vehicles: p.vehicles || [], results: p.results || {}, hidden: false, highlight: false,
   }));
   const playerBySlot = new Map<number, Player>();
   for (const p of players) playerBySlot.set(p.slot, p);
@@ -180,9 +212,12 @@ export async function loadSession(id: string, progress: (s: string) => void): Pr
   const stats = new Map<number, any>(); try { const r = await fetch(base + 'stats.json'); if (r.ok) for (const s of await r.json()) stats.set(s.slot, s); } catch (e) { /* older file */ }
   if (radarCatalog === undefined) { radarCatalog = null; try { const r = await fetch('/api/catalog/radars.json'); if (r.ok) radarCatalog = await r.json(); } catch (e) { /* none */ } }
   const launchByMissile = new Map<number, any>(); for (const l of launches) launchByMissile.set(l.missile, l);
+  let shots: Shots | null = null;
+  try { const r = await fetch(base + 'shots.json'); if (r.ok) shots = readShots(await r.json(), tracksBuf); } catch (e) { /* older file */ }
+  const ground = units.some(u => u.kind === 'ground' && u.player >= 0);
   return {
     id, manifest, players, playerBySlot, units, events, kills, launches, launchByMissile, map, stats, radars: radarCatalog,
-    t0: manifest.match.tFirstMs, t1: manifest.match.tLastMs, terrain, levelName,
+    t0: manifest.match.tFirstMs, t1: manifest.match.tLastMs, terrain, levelName, shots, ground,
   };
 }
 
@@ -198,7 +233,22 @@ export async function loadTerrain(level: string): Promise<Terrain | null> {
     const h = new Float32Array(n * n);
     const k = (m.hMax - m.hMin) / 65535;
     for (let i = 0; i < n * n; i++) h[i] = m.hMin + raw[i] * k;
-    return { n, x0: m.x0, z0: m.z0, x1: m.x1, z1: m.z1, cell: m.cellM, hMin: m.hMin, hMax: m.hMax, water: m.waterLevel, h };
+    let detail: TerrainDetail | null = null;
+    const d = m.detail;
+    if (d && d.w > 1 && d.h > 1) {
+      try {
+        const dr = await fetch(base + 'detail.u16');
+        if (dr.ok) {
+          const r16 = new Uint16Array(await dr.arrayBuffer());
+          if (r16.length === d.w * d.h) {
+            const v = new Float32Array(r16.length), dk = (d.hMax - d.hMin) / 65535;
+            for (let i = 0; i < r16.length; i++) v[i] = d.hMin + r16[i] * dk;
+            detail = { w: d.w, h: d.h, x0: d.x0, z0: d.z0, cell: d.cellM, hMin: d.hMin, hMax: d.hMax, v };
+          }
+        }
+      } catch (e) { /* none */ }
+    }
+    return { n, x0: m.x0, z0: m.z0, x1: m.x1, z1: m.z1, cell: m.cellM, hMin: m.hMin, hMax: m.hMax, water: m.waterLevel, h, detail };
   } catch (e) {
     return null;
   }
@@ -206,6 +256,15 @@ export async function loadTerrain(level: string): Promise<Terrain | null> {
 
 export function groundHeight(tr: Terrain | null, x: number, z: number): number {
   if (!tr) return 0;
+  const dd = tr.detail;
+  if (dd) {
+    const fx = (x - dd.x0) / dd.cell, fz = (z - dd.z0) / dd.cell;
+    if (fx >= 0 && fz >= 0 && fx < dd.w - 1 && fz < dd.h - 1) {
+      const ix = Math.floor(fx), iz = Math.floor(fz), ax = fx - ix, az = fz - iz, w = dd.w, v = dd.v;
+      const a = v[iz * w + ix], b = v[iz * w + ix + 1], c = v[(iz + 1) * w + ix], e = v[(iz + 1) * w + ix + 1];
+      return Math.max((a * (1 - ax) + b * ax) * (1 - az) + (c * (1 - ax) + e * ax) * az, tr.water);
+    }
+  }
   const fx = (x - tr.x0) / tr.cell - 0.5, fz = (z - tr.z0) / tr.cell - 0.5;
   const n = tr.n;
   const cx = Math.max(0, Math.min(n - 1.001, fx)), cz = Math.max(0, Math.min(n - 1.001, fz));
@@ -217,12 +276,12 @@ export function groundHeight(tr: Terrain | null, x: number, z: number): number {
 }
 
 // Speed and load factor from positions (the replay stores neither).
-function derive(u: Unit) {
+function derive(u: Unit, win = 1) {
   const n = u.n;
   const sp = new Float32Array(n), g = new Float32Array(n);
   const vx = new Float32Array(n), vy = new Float32Array(n), vz = new Float32Array(n);
   for (let i = 0; i < n; i++) {
-    const a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1);
+    const a = Math.max(0, i - win), b = Math.min(n - 1, i + win);
     const dt = (u.t[b] - u.t[a]) / 1000;
     if (dt <= 0) continue;
     vx[i] = (u.x[b] - u.x[a]) / dt; vy[i] = (u.y[b] - u.y[a]) / dt; vz[i] = (u.z[b] - u.z[a]) / dt;
@@ -353,4 +412,28 @@ export function outcomeText(l: any): string {
   if (l.outcome === 'close') return 'Passed within ' + l.missDistanceM + ' m, no kill recorded';
   if (l.outcome === 'miss') return 'Missed' + (REASONS[l.reason] ? ': ' + REASONS[l.reason] : '') + (l.missDistanceM !== undefined ? ' (closest ' + (l.missDistanceM >= 1000 ? (l.missDistanceM / 1000).toFixed(1) + ' km' : l.missDistanceM + ' m') + ')' : '');
   return 'Target not identified';
+}
+
+function readShots(j: any, buf: ArrayBuffer): Shots | null {
+  if (!j || !j.columns || !j.columns.x) return null;
+  const f = (c: any) => new Float32Array(buf, c.offset, c.count);
+  const list: Shot[] = (j.shots || []).map((s: any) => ({
+    t: s.t, unit: s.unit, weapon: s.weapon, cls: s.class || 'unknown', caliberMm: s.caliberMm || 0, weaponName: s.weaponName || '',
+    shell: s.shell || '', shellType: s.shellType || '', shellSource: s.shellSource || '', ammoSlot: s.ammoSlot, ammoLeft: s.ammoLeft,
+    reloadS: s.reloadS || 0, speedMs: s.speedMs || 0, bearing: s.bearingDeg, elev: s.elevDeg, elevAdj: s.elevAdjDeg || 0,
+    p0: s.p0, n: s.n, tEnd: s.tEnd || s.t, end: s.end || 'none', hit: s.hit === undefined ? -1 : s.hit, kill: !!s.kill,
+    missM: s.missM === undefined ? -1 : s.missM,
+  }));
+  list.sort((a, b) => a.t - b.t);
+  const byUnit = new Map<number, Shot[]>();
+  for (const s of list) { let l = byUnit.get(s.unit); if (!l) { l = []; byUnit.set(s.unit, l); } l.push(s); }
+  return { dt: j.pathDtMs || 40, x: f(j.columns.x), y: f(j.columns.y), z: f(j.columns.z), list, byUnit };
+}
+
+// Human-readable shell name: "120mm_m829a3" -> "M829A3", "ap_i_t_ball_M20" -> "AP-I-T M20".
+export function shellLabel(s: string): string {
+  if (!s) return '';
+  let n = s.replace(/^\d+(\.\d+)?mm_/i, '');
+  n = n.replace(/_ball/i, '').replace(/^(ap|i|t|he|apcr)_(?=[a-z])/i, m => m.toUpperCase());
+  return n.replace(/_/g, ' ').toUpperCase();
 }

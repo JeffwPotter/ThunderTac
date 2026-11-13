@@ -128,16 +128,17 @@ func terrainCmd(args []string) error {
 
 // builtLevel is one finished terrain, ready to write.
 type builtLevel struct {
-	meta map[string]any
-	raw  []byte
-	msg  string
+	meta   map[string]any
+	raw    []byte
+	detail []byte // optional fine grid of the tank battle area (detail.u16)
+	msg    string
 }
 
 func (a *builtLevel) same(b *builtLevel) bool {
-	if a == nil || b == nil || !bytes.Equal(a.raw, b.raw) {
+	if a == nil || b == nil || !bytes.Equal(a.raw, b.raw) || !bytes.Equal(a.detail, b.detail) {
 		return false
 	}
-	for _, k := range []string{"x0", "z0", "x1", "z1", "hMin", "hMax", "source"} {
+	for _, k := range []string{"x0", "z0", "x1", "z1", "hMin", "hMax", "source", "detail"} {
 		if fmt.Sprint(a.meta[k]) != fmt.Sprint(b.meta[k]) {
 			return false
 		}
@@ -196,7 +197,10 @@ func writeWTT(outDir, stem string, bl *builtLevel) error {
 	for _, e := range []struct {
 		name string
 		data []byte
-	}{{"terrain.json", js}, {"height.u16", bl.raw}} {
+	}{{"terrain.json", js}, {"height.u16", bl.raw}, {"detail.u16", bl.detail}} {
+		if e.data == nil {
+			continue
+		}
 		w, err := zw.Create(e.name)
 		if err != nil {
 			return err
@@ -977,5 +981,65 @@ func buildTerrain(path, stem string, li levelInfo, n int) (*builtLevel, error) {
 	if !li.hasCoords {
 		meta["note"] = "map corners not in the level .blk; taken from the terrain data"
 	}
-	return &builtLevel{meta: meta, raw: raw, msg: fmt.Sprintf("%s; heights %.0f..%.0f m; %d of %d cells filled from neighbours", source, hMin, hMax, empty, n*n)}, nil
+	detail, dmeta, dmsg := buildDetail(b, best, useHM2)
+	if detail != nil {
+		meta["detail"] = dmeta
+		meta["schema"] = 2
+		source += "; " + dmsg
+	}
+	return &builtLevel{meta: meta, raw: raw, detail: detail, msg: fmt.Sprintf("%s; heights %.0f..%.0f m; %d of %d cells filled from neighbours", source, hMin, hMax, empty, n*n)}, nil
+}
+
+// buildDetail keeps the fine heightmap of a tank battle area (2 m cells on
+// ground maps) as a second grid. Shell arcs and tank positions need metre-level
+// ground; the 128 m whole-map grid smooths hills away. The grid is stored at
+// its native cell size, capped at 4096 x 4096 (larger maps are subsampled).
+func buildDetail(b []byte, whole *hm2Header, wholeUsed bool) ([]byte, map[string]any, string) {
+	var pick *hm2Header
+	for _, h := range findHM2(b) {
+		h := h
+		if wholeUsed && whole != nil && h.o == whole.o {
+			continue
+		}
+		if h.cell > 8 {
+			continue
+		}
+		if pick == nil || h.cell*float64(h.w) > pick.cell*float64(pick.w) {
+			pick = &h
+		}
+	}
+	if pick == nil {
+		return nil, nil, ""
+	}
+	hm, err := readHM2(b, *pick)
+	if err != nil {
+		return nil, nil, ""
+	}
+	step := 1
+	for hm.w/step > 4096 || hm.h/step > 4096 {
+		step *= 2
+	}
+	w, h := hm.w/step, hm.h/step
+	lo, hi := math.Inf(1), math.Inf(-1)
+	for r := 0; r < h; r++ {
+		for c := 0; c < w; c++ {
+			v := float64(hm.height[(r*step)*hm.w+c*step])
+			lo, hi = math.Min(lo, v), math.Max(hi, v)
+		}
+	}
+	if hi <= lo {
+		hi = lo + 1
+	}
+	raw := make([]byte, 2*w*h)
+	for r := 0; r < h; r++ {
+		for c := 0; c < w; c++ {
+			v := float64(hm.height[(r*step)*hm.w+c*step])
+			q := math.Round((v - lo) / (hi - lo) * 65535)
+			binary.LittleEndian.PutUint16(raw[2*(r*w+c):], uint16(math.Max(0, math.Min(65535, q))))
+		}
+	}
+	cell := hm.cell * float64(step)
+	meta := map[string]any{"w": w, "h": h, "x0": hm.ofsX, "z0": hm.ofsZ, "cellM": cell, "hMin": lo, "hMax": hi,
+		"note": "samples at x0 + col*cellM, z0 + row*cellM (rows south to north)"}
+	return raw, meta, fmt.Sprintf("detail %d x %d at %g m over %.1f km", w, h, cell, cell*float64(w)/1000)
 }

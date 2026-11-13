@@ -277,6 +277,13 @@ func catalog(args []string) error {
 	if err := write("mission_areas.json", map[string]any{"missions": missions}); err != nil {
 		return err
 	}
+	tanks, nWeapons := groundCatalog(*data)
+	if len(tanks) > 0 {
+		if err := write("ground.json", map[string]any{"vehicles": tanks}); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("catalog: %d ground vehicles with %d weapon mounts\n", len(tanks), nWeapons)
 	fmt.Printf("catalog: %d vehicles, %d guided weapons, %d radars on %d aircraft, %d areas in %d mission files\n",
 		len(vehicles), len(weapons), len(sensors), len(byAircraft), nAreas, len(missions))
 	return nil

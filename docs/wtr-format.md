@@ -41,9 +41,11 @@ selfChecks: [ { id, name, status: pass|warn|fail|skipped, value, expected, hint?
 ```
 
 ## players.json
-Array of `{ slot, name, clan?, title?, team, userId, units[], results{} }`.
+Array of `{ slot, name, clan?, title?, team, userId, units[], vehicles[]?, results{} }`.
 `units` lists the player's aircraft units in time order. A player has more than
 one when they land, rearm and take off again; each flight is its own unit.
+`vehicles` (decoder 0.9.0) lists the player's ground vehicles in time order, one
+per spawn (ground battles). In Ground RB a player can have both.
 `results` is the player's row from the results table (kills, teamKills, deaths,
 assists, score, missileEvades, …).
 
@@ -53,7 +55,7 @@ Array of:
 id, kind: aircraft | missile | countermeasure | bomb | ground
 name            display name ("F/A-18E", "AIM-120D", "Chaff")
 class?          internal game name ("fa_18e_block_2")
-player?         player slot (aircraft flown by a player)
+player?         player slot (aircraft flown or ground vehicle driven by a player)
 ai?             true for AI aircraft
 team
 parent?         unit that launched or released this one
@@ -80,7 +82,8 @@ viewed directly as a typed array. `offset` is in bytes from the start of `tracks
 | all | `t` (u32), `x`, `y`, `z` (f32) |
 | aircraft | + `heading`, `pitch`, `roll` (f32). About 4 samples per second. From decoder 0.5.0 also the derived columns `speed` (m/s), `mach`, `g`, `climb` (m/s), `agl` (metres above terrain; NaN without a terrain file) |
 | missile | + `seekerMode` (u8: 0 none/unknown, 1 search, 2 track), `seekerKind` (u8: 0 none, 1 radar, 2 infrared, 3 unknown), `seekerRange` (f32, metres), `losX/Y/Z` (f32, seeker line-of-sight unit vector), `targetEstX/Y/Z` (f32, seeker's target estimate). About 24 samples per second. Missing values are NaN. From decoder 0.5.0 also derived `speed`, `mach`, `g` |
-| countermeasure, bomb, ground | position only |
+| ground (decoder 0.9.0, moving vehicles) | + `heading`, `pitch`, `roll` (hull, f32), `gunBearing` (f32, world bearing of the main gun, clockwise from north), `gunElev` (f32, gun elevation, degrees). About 24 samples per second. NaN where not sent. Position `y` is where the tracks touch the ground (median 0.005 m from the 2 m terrain) |
+| countermeasure, bomb, other ground | position only |
 
 Derived columns are computed from position and time (the replay stores none of them): speed and climb by difference over the neighbouring samples, G from the change in velocity over ±2 samples plus gravity, Mach with the standard atmosphere. They are noisy in the first and last second of a track.
 
@@ -158,9 +161,33 @@ Array, one per player: `slot, flights, flightTimeS, distanceKm, maxAltM, meanAlt
 ## Self-check added in 0.3.0
 `underground` — no aircraft sample more than 50 m below the terrain. Skipped when the map has no terrain file.
 
+## Self-checks added in 0.9.0 (ground battles only)
+`ground_heading` (hull heading vs direction of travel), `ground_gun_on_target`
+(gun bearing within 3° of the victim at kill shots), `ground_kill_arcs` (computed
+arcs of kill shots pass within 5 m of the victim). `kills_vs_results` now counts
+ground vehicle deaths too; `aircraft_rate` is skipped when no player flew.
+
+## shots.json (decoder 0.9.0, ground battles only)
+Every weapon firing of every ground vehicle, with a computed shell arc. Absent in
+air battles. Background and checks: `docs/ground.md`.
+```
+note, pathDtMs (40), summary { shots, shots_cannon, shots_mg, arcs, end_ground, … }
+columns { x, y, z }      arc points of all shots, f32 columns in tracks.bin (shotX/Y/Z)
+shots[]: t (fire time, ms), unit, weapon (index in the vehicle's weapon list),
+         class: cannon | mg | atgm | smoke | unknown   (mg = 14.7 mm and smaller)
+         caliberMm, weaponName, shell, shellType, shellSource: kill | slot | guess,
+         ammoSlot, ammoLeft (-1 unknown), reloadS, speedMs (muzzle velocity),
+         bearingDeg, elevDeg (recorded gun direction; bearing -1 = unknown),
+         elevAdjDeg? (kill shots: elevation change that puts the arc on the victim, at most 1.5°),
+         p0, n (arc points p0..p0+n-1, every pathDtMs from t), tEnd,
+         end: vehicle | aircraft | ground | range | none, hit? (unit id), kill?, missM? (kill shots: closest approach to the victim)
+```
+Only the firing, the gun direction and the rounds left are recorded; **the arc is
+computed** (gravity, drag on the shell's ballistic calibre, standard atmosphere,
+no wind). ATGM and smoke firings have no arc (missiles have their own tracks).
+
 ## Not in schema 1 (planned)
-- Terrain and map image (will be separate asset files, shared between sessions of the same map).
-- Ground-battle specifics.
+- Map image (terrain is a separate asset file, shared between sessions of the same map).
 
 ## Files next to a `.wtr` (written by the viewer, not part of the format)
 `<id>.analysis.json`, `<id>.library.json` (analysis caches) and
