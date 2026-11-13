@@ -117,12 +117,16 @@ func (p *PositionRetainerParser) parseGroundPositions(pk *packet.Packet) (any, e
 		if err != nil {
 			return samples, fmt.Errorf("reading ground UID %d delta: %w", uid, err)
 		}
-		if pos, ok := parseVehiclePosition(vehicleData, val1); ok {
+		key := GroundKey(uid)
+		pose := GroundPose{Yaw: nan32, Pitch: nan32, Roll: nan32, GunYaw: nan32, GunPitch: nan32}
+		gotPos := false
+		if pos, ok := parseVehiclePositionPose(vehicleData, val1, &pose); ok {
 			pos.Time = pk.CurrentTime
-			key := GroundKey(uid)
+			pose.Time = pk.CurrentTime
 			p.GroundPaths[key] = append(p.GroundPaths[key], pos)
 			p.associateGroundEntity(uid, key)
 			samples = append(samples, pos)
+			gotPos = true
 		}
 
 		if compressed {
@@ -132,18 +136,29 @@ func (p *PositionRetainerParser) parseGroundPositions(pk *packet.Packet) (any, e
 				return samples, err
 			}
 			if hasPoint4 {
-				if _, err = readBitsStrict(g, 4*32); err != nil {
-					return samples, err
+				var q [4]float32
+				for i := range q {
+					v, err := readBitsStrict(g, 32)
+					if err != nil {
+						return samples, err
+					}
+					q[i] = math.Float32frombits(v)
 				}
+				// Confirmed on three Ground RB matches: world gun bearing =
+				// 90 - q[0] degrees (clockwise from north), q[1] = gun elevation.
+				pose.GunYaw, pose.GunPitch = q[0], q[1]
 			}
 			hasTurretData, err := readBitStrict(g)
 			if err != nil {
 				return samples, err
 			}
 			if hasTurretData {
-				if err = skipGroundTurrets(g, int(turretCount)); err != nil {
+				if err = p.readGroundWeapons(g, int(turretCount), key, pk.CurrentTime); err != nil {
 					return samples, err
 				}
+			}
+			if gotPos {
+				p.GroundPoses[key] = append(p.GroundPoses[key], pose)
 			}
 			hasSensor, err := readBitStrict(g)
 			if err != nil {
@@ -200,6 +215,14 @@ func (p *PositionRetainerParser) readGroundDelta(r *danet.BitReader, uid uint16)
 }
 
 func parseVehiclePosition(data []byte, hasDirectionFloats bool) (game.SpaceTime, bool) {
+	return parseVehiclePositionPose(data, hasDirectionFloats, nil)
+}
+
+// parseVehiclePositionPose also returns the hull attitude when it is sent as
+// three 16-bit angles. The first is the hull yaw: heading = raw*360/65536 + 90
+// degrees clockwise from north (matches the direction of travel on 99.8% of
+// moving samples, three Ground RB matches).
+func parseVehiclePositionPose(data []byte, hasDirectionFloats bool, pose *GroundPose) (game.SpaceTime, bool) {
 	if len(data) == 0 {
 		return game.SpaceTime{}, false
 	}
@@ -225,8 +248,21 @@ func parseVehiclePosition(data []byte, hasDirectionFloats bool) (game.SpaceTime,
 				return game.SpaceTime{}, false
 			}
 		}
-	} else if _, err = readBitsStrict(r, 3*16); err != nil {
-		return game.SpaceTime{}, false
+	} else {
+		var a [3]uint32
+		for i := range a {
+			if a[i], err = readBitsStrict(r, 16); err != nil {
+				return game.SpaceTime{}, false
+			}
+		}
+		if pose != nil {
+			pose.Yaw = float32(math.Mod(float64(a[0])*360/65536+90, 360))
+			// pitch nose-up positive and roll right-side-down positive,
+			// checked against the 2 m terrain slope under each tank (the raw
+			// roll has the opposite sign)
+			pose.Pitch = signedAngle16(a[1])
+			pose.Roll = -signedAngle16(a[2])
+		}
 	}
 	if _, err = readBitStrict(r); err != nil {
 		return game.SpaceTime{}, false
@@ -343,7 +379,12 @@ func readCompressedLimited(r *danet.BitReader) (uint64, error) {
 
 func alignReader(r *danet.BitReader) { r.BitOffset = (r.BitOffset + 7) &^ 7 }
 
-func skipGroundTurrets(r *danet.BitReader, count int) error {
+// readGroundWeapons reads the per-weapon block. Weapon i is entry i of the
+// vehicle's commonWeapons list in its tankmodels .blk. Each entry holds the
+// replay-clock time (s) the weapon last fired, the time it is ready again, and
+// the remaining rounds per ammunition type. A shot is recorded when the fired
+// time changes; the ammunition type is the one whose count dropped.
+func (p *PositionRetainerParser) readGroundWeapons(r *danet.BitReader, count int, key uint64, now uint32) error {
 	if count < 0 || count > 255 {
 		return fmt.Errorf("invalid turret count %d", count)
 	}
@@ -358,21 +399,54 @@ func skipGroundTurrets(r *danet.BitReader, count int) error {
 		if _, err = readBitsStrict(r, 8); err != nil {
 			return err
 		}
-		if _, err = readBitsStrict(r, 32); err != nil {
-			return err
-		}
-		if _, err = readBitsStrict(r, 32); err != nil {
-			return err
-		}
-		ammo, err := readBitsStrict(r, 8)
+		a, err := readBitsStrict(r, 32)
 		if err != nil {
 			return err
 		}
-		if _, err = readBitsStrict(r, int(ammo)*16); err != nil {
+		b, err := readBitsStrict(r, 32)
+		if err != nil {
 			return err
 		}
+		ammoTypes, err := readBitsStrict(r, 8)
+		if err != nil {
+			return err
+		}
+		ammo := make([]uint16, ammoTypes)
+		for j := range ammo {
+			v, err := readBitsStrict(r, 16)
+			if err != nil {
+				return err
+			}
+			ammo[j] = uint16(v)
+		}
+		p.observeWeapon(key, uint8(i), math.Float32frombits(a), math.Float32frombits(b), ammo, now)
 	}
 	return nil
+}
+
+func (p *PositionRetainerParser) observeWeapon(key uint64, idx uint8, firedAt, readyAt float32, ammo []uint16, now uint32) {
+	wk := groundWeaponKey{key, idx}
+	last, seen := p.weaponLast[wk]
+	p.weaponLast[wk] = weaponState{firedAt: firedAt, ammo: ammo}
+	if firedAt <= 0 || math.IsNaN(float64(firedAt)) || (seen && last.firedAt == firedAt) {
+		return
+	}
+	slot := -1
+	if seen && len(last.ammo) == len(ammo) {
+		for j := range ammo {
+			if ammo[j] < last.ammo[j] {
+				slot = j
+				break
+			}
+		}
+	}
+	left := -1
+	if slot >= 0 {
+		left = int(ammo[slot])
+	}
+	p.GroundShots[key] = append(p.GroundShots[key], GroundShot{
+		Time: now, Weapon: idx, FiredAtS: firedAt, ReadyAtS: readyAt, AmmoSlot: slot, AmmoLeft: left, AmmoTypes: len(ammo),
+	})
 }
 
 func skipSeekerData(r *danet.BitReader) error {
@@ -479,4 +553,43 @@ func isGroundEntity(entity *packetecs2.Entity) bool {
 		}
 	}
 	return false
+}
+
+var nan32 = float32(math.NaN())
+
+func signedAngle16(v uint32) float32 {
+	a := float32(v) * 360 / 65536
+	if a >= 180 {
+		a -= 360
+	}
+	return a
+}
+
+// GroundPose is the attitude sent with a ground sample (one per GroundPaths
+// entry, same order). Angles in degrees; NaN when not sent.
+type GroundPose struct {
+	Time             uint32
+	Yaw, Pitch, Roll float32 // Yaw: hull heading clockwise from north
+	GunYaw, GunPitch float32 // raw; world gun bearing = 90 - GunYaw
+}
+
+// GroundShot is one weapon firing seen in the per-weapon block.
+type GroundShot struct {
+	Time      uint32  // packet time (ms) when the change was seen
+	Weapon    uint8   // index into the vehicle's commonWeapons list
+	FiredAtS  float32 // replay clock, seconds
+	ReadyAtS  float32
+	AmmoSlot  int // ammunition type whose count dropped; -1 unknown
+	AmmoLeft  int
+	AmmoTypes int
+}
+
+type groundWeaponKey struct {
+	key uint64
+	idx uint8
+}
+
+type weaponState struct {
+	firedAt float32
+	ammo    []uint16
 }

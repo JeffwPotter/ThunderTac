@@ -2,7 +2,7 @@
 // right-handed, so everything is drawn at (x, y, -z).
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/three/OrbitControls.js';
-import { Session, Unit, Sample, Terrain, sampleAt, radarAt, groundHeight, lerpCol, idxAt, scanPattern } from './data';
+import { Session, Unit, Sample, Terrain, Shot, sampleAt, radarAt, groundHeight, lerpCol, idxAt, scanPattern } from './data';
 import { Trail, Segments } from './lines';
 import { envelope, physFor, Phys } from './envelope';
 
@@ -27,6 +27,11 @@ export interface Settings {
   view: '3d' | '2d';
   scanZone: boolean; airfields: boolean; areas: boolean;
   trailStyle: 'line' | 'ribbon'; lineWidth: number; vector: boolean; dlz: boolean;
+  // ground battles
+  shells: boolean;            // cannon shell arcs (calibre above 14.7 mm)
+  mgRounds: boolean;          // machine-gun rounds (14.7 mm and smaller)
+  shellKeep: number;          // seconds an arc stays after it lands; -1 = keep all
+  gunLines: 'off' | 'focus' | 'all';  // line along each vehicle's gun
 }
 
 export const COLORS = {
@@ -35,11 +40,12 @@ export const COLORS = {
 };
 
 const D2R = Math.PI / 180;
-const AC_LEN = 18, MS_LEN = 5;
+const AC_LEN = 18, MS_LEN = 5, TANK_LEN = 9.5;
 
 interface Vis {
   u: Unit;
   mesh: THREE.Mesh | null;
+  turret: THREE.Mesh | null;     // ground vehicles: turns to the recorded gun bearing
   trail: Trail | null;
   wing: number[] | null;
   beam: THREE.Mesh | null;
@@ -52,6 +58,30 @@ interface Vis {
   sx: number; sy: number; onScreen: boolean;
   color: number;
   focus: boolean;
+}
+
+// Tank symbol: hull with a sloped front, origin on the ground at the hull centre,
+// front toward -z (like the aircraft). The turret is a separate mesh.
+function hullGeometry(): THREE.BufferGeometry {
+  const g = new THREE.BufferGeometry();
+  const L = TANK_LEN / 2, W = 1.8, H = 1.7, f = L - 1.4;
+  const P = [[-W, 0.35, -f], [W, 0.35, -f], [W, 0.35, L], [-W, 0.35, L], [-W, H, -f + 0.9], [W, H, -f + 0.9], [W, H, L], [-W, H, L], [-W, 0.8, -L], [W, 0.8, -L]];
+  const v: number[] = []; const q = (a: number, b: number, c: number, d: number) => { for (const i of [a, b, c, a, c, d]) v.push(...P[i]); };
+  q(4, 5, 6, 7);          // top
+  q(3, 2, 1, 0);          // bottom
+  q(7, 6, 2, 3);          // rear
+  q(0, 1, 9, 8); q(8, 9, 5, 4);   // lower and upper glacis
+  q(0, 8, 4, 7); q(7, 3, 0, 7);   // left side (approx.)
+  q(1, 2, 6, 5); q(5, 9, 1, 5);   // right side
+  g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3)); g.computeVertexNormals(); return g;
+}
+function turretGeometry(): THREE.BufferGeometry {
+  const box = new THREE.BoxGeometry(3.0, 0.9, 3.6); box.translate(0, 0.45, 0.3);
+  const gun = new THREE.CylinderGeometry(0.16, 0.2, 5.6, 6); gun.rotateX(Math.PI / 2); gun.translate(0, 0.5, -4.3);
+  const g = new THREE.BufferGeometry();
+  const a = box.toNonIndexed().getAttribute('position').array as Float32Array, b = gun.toNonIndexed().getAttribute('position').array as Float32Array;
+  const v = new Float32Array(a.length + b.length); v.set(a, 0); v.set(b, a.length);
+  g.setAttribute('position', new THREE.BufferAttribute(v, 3)); g.computeVertexNormals(); return g;
 }
 
 function aircraftGeometry(): THREE.BufferGeometry {
@@ -138,6 +168,10 @@ export class Viewer {
   private terrainMesh: THREE.Mesh | null = null;
   private terrainTex: THREE.CanvasTexture | null = null;
   private acGeo = aircraftGeometry();
+  private hullGeo = hullGeometry();
+  private turretGeo = turretGeometry();
+  private shellSeg!: Segments; private mgSeg!: Segments; private gunSeg!: Segments; private impactPts!: THREE.Points; private headPts!: THREE.Points;
+  private detailMesh: THREE.Mesh | null = null; private detailTex: THREE.CanvasTexture | null = null;
   private msGeo: THREE.BufferGeometry;
   private beamGeo: THREE.BufferGeometry;
   private cmPts!: THREE.Points; private bombPts!: THREE.Points; private groundPts!: THREE.Points; private deadPts!: THREE.Points; private activePts!: THREE.Points;
@@ -291,6 +325,7 @@ export class Viewer {
   // ---------- session ----------
   setSession(s: Session) {
     this.session = s;
+    this.controls.minDistance = s.ground ? 6 : 30;
     this.root.clear();
     this.labelLayer.innerHTML = '';
     this.vis = []; this.byKind = { aircraft: [], missile: [], countermeasure: [], bomb: [], ground: [] };
@@ -299,7 +334,7 @@ export class Viewer {
     this.buildTerrain(s.terrain);
 
     for (const u of s.units) {
-      const v: Vis = { u, mesh: null, trail: null, wing: null, beam: null, scan: null, scanKey: '', label: null, labelText: '',
+      const v: Vis = { u, mesh: null, turret: null, trail: null, wing: null, beam: null, scan: null, scanKey: '', label: null, labelText: '',
         alive: false, shown: false, px: 0, py: 0, pz: 0, sx: 0, sy: 0, onScreen: false, color: 0xffffff, focus: false };
       this.vis.push(v); this.byKind[u.kind].push(v);
       if (u.kind === 'aircraft' || u.kind === 'missile') {
@@ -322,6 +357,21 @@ export class Viewer {
         v.trail = new Trail(pos, wing, up, tsec);
         v.trail.mat.uniforms.uRes.value = this.res;
         this.root.add(v.trail.mesh);
+      } else if (u.kind === 'ground' && !u.isStatic) {
+        // moving ground vehicles: hull + turret + track
+        const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide, flatShading: true });
+        v.mesh = new THREE.Mesh(this.hullGeo, mat);
+        v.turret = new THREE.Mesh(this.turretGeo, mat);
+        for (const m of [v.mesh, v.turret]) { m.matrixAutoUpdate = false; m.frustumCulled = false; m.visible = false; this.root.add(m); }
+        const n = u.n + 1;
+        const pos = new Float32Array(n * 3), tsec = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          const k = Math.min(i, u.n - 1);
+          pos[i * 3] = u.x[k]; pos[i * 3 + 1] = u.y[k] + 0.6; pos[i * 3 + 2] = -u.z[k]; tsec[i] = (u.t[k] - s.t0) / 1000;
+        }
+        v.trail = new Trail(pos, null, null, tsec);
+        v.trail.mat.uniforms.uRes.value = this.res;
+        this.root.add(v.trail.mesh);
       }
     }
 
@@ -335,7 +385,9 @@ export class Viewer {
     this.cmPts = mkPts(this.byKind.countermeasure.length, 3.5);
     this.bombPts = mkPts(this.byKind.bomb.length, 4.5);
     this.groundPts = mkPts(this.byKind.ground.length, 5);
-    this.deadPts = mkPts(this.byKind.aircraft.length, 11, crossTexture());
+    this.deadPts = mkPts(this.byKind.aircraft.length + this.byKind.ground.length, 11, crossTexture());
+    this.impactPts = mkPts(4096, 7);
+    this.headPts = mkPts(8192, 4);
     this.activeAt.clear();
     for (const v of this.byKind.missile) {
       const u = v.u; if (!u.seekerMode || !u.missile || u.missile.guidance !== 'ARH') continue;
@@ -352,6 +404,11 @@ export class Viewer {
     this.measureSeg = mkSeg(1, 2, 0.95);
     this.vectors = mkSeg(this.byKind.aircraft.length, 1.5, 0.8);
     this.dlzSeg = mkSeg(256, 2, 0.85);
+    let capC = 1, capM = 1;
+    if (s.shots) for (const sh of s.shots.list) { if (sh.cls === 'mg') capM += sh.n + 1; else capC += sh.n + 1; }
+    this.shellSeg = mkSeg(Math.min(capC, 400000), 2.4, 0.95);
+    this.mgSeg = mkSeg(Math.min(capM, 400000), 1.0, 0.75);
+    this.gunSeg = mkSeg(this.byKind.ground.length, 1.2, 0.7);
     this.dlzCache = null; this.dlzInfo = null;
 
     const ring = new THREE.RingGeometry(0.82, 1, 40);
@@ -398,24 +455,27 @@ export class Viewer {
       v.focus = this.isFocus(v.u);
       if (v.mesh) {
         c.set(v.color); if (v.u.kind === 'missile') c.lerp(white, 0.35);
+        if (v.u.kind === 'ground' && v.u.player < 0) c.multiplyScalar(0.7);
         (v.mesh.material as THREE.MeshLambertMaterial).color.copy(c);
         const tu = v.trail!.mat.uniforms;
         (tu.uColor.value as THREE.Color).copy(c); tu.uOpacity.value = v.focus ? 1 : (v.u.kind === 'missile' ? 0.8 : 0.55);
       }
       if (v.label) v.label.classList.toggle('focus', v.focus);
     }
-    // ground units never move much: fill once
-    const g = this.byKind.ground; const pos = this.groundPts.geometry.getAttribute('position') as THREE.BufferAttribute;
+    // fixed ground objects (anti-aircraft guns, radars): fill once
+    const g = this.byKind.ground.filter(v => !v.mesh); const pos = this.groundPts.geometry.getAttribute('position') as THREE.BufferAttribute;
     const col = this.groundPts.geometry.getAttribute('color') as THREE.BufferAttribute;
     for (let i = 0; i < g.length; i++) {
       const u = g[i].u; c.set(this.colorFor(u)).multiplyScalar(0.75);
       col.setXYZ(i, c.r, c.g, c.b);
-      pos.setXYZ(i, u.x[0], Math.max(u.y[0], groundHeight(this.session.terrain, u.x[0], u.z[0])) + 8, -u.z[0]);
+      pos.setXYZ(i, u.x[0], Math.max(u.y[0], groundHeight(this.session.terrain, u.x[0], u.z[0])) + (this.session.ground ? 3 : 8), -u.z[0]);
     }
+    this.nStaticGround = g.length;
     pos.needsUpdate = true; col.needsUpdate = true;
   }
 
   // ---------- airfields and mission areas ----------
+  private nStaticGround = 0;
   private airfieldLines: Segments | null = null;
   private areaLines: Segments | null = null;
   private mapLabels: { x: number, y: number, z: number, div: HTMLDivElement, kind: string }[] = [];
@@ -502,14 +562,22 @@ export class Viewer {
       uv[(r * N + cI) * 2] = cI / (N - 1); uv[(r * N + cI) * 2 + 1] = r / (N - 1);
     }
     const idx = new Uint32Array((N - 1) * (N - 1) * 6); let q = 0;
+    const dt = tr ? tr.detail : null;
+    const inDetail = (k: number) => !!dt && pos[k * 3] > dt.x0 && pos[k * 3] < dt.x0 + (dt.w - 1) * dt.cell && -pos[k * 3 + 2] > dt.z0 && -pos[k * 3 + 2] < dt.z0 + (dt.h - 1) * dt.cell;
+    const sp = (ext.x1 - ext.x0) / (N - 1);   // coarse vertex spacing
+    const nearDetail = (k: number) => !!dt && pos[k * 3] > dt.x0 - sp && pos[k * 3] < dt.x0 + (dt.w - 1) * dt.cell + sp && -pos[k * 3 + 2] > dt.z0 - sp && -pos[k * 3 + 2] < dt.z0 + (dt.h - 1) * dt.cell + sp;
+    // inside the 2 m battle area the coarse surface is dropped out of sight (the
+    // fine mesh covers it); its edge triangles slope down under the fine mesh
+    if (dt) for (let k = 0; k < N * N; k++) if (nearDetail(k)) pos[k * 3 + 1] -= 40;
     for (let r = 0; r < N - 1; r++) for (let cI = 0; cI < N - 1; cI++) {
       const a = r * N + cI, b = a + 1, d = a + N, e = d + 1;
+      if (dt && inDetail(a) && inDetail(b) && inDetail(d) && inDetail(e)) continue;  // the 2 m battle-area mesh covers it
       idx[q++] = a; idx[q++] = b; idx[q++] = d; idx[q++] = b; idx[q++] = e; idx[q++] = d;
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    g.setIndex(new THREE.BufferAttribute(idx.subarray(0, q), 1));
     const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1024;
     this.terrainTex = new THREE.CanvasTexture(canvas);
     this.terrainTex.colorSpace = THREE.SRGBColorSpace; this.terrainTex.anisotropy = 8;
@@ -517,7 +585,32 @@ export class Viewer {
     this.root.add(this.terrainMesh);
     const skirt = new THREE.Mesh(new THREE.PlaneGeometry(2000000, 2000000), new THREE.MeshBasicMaterial({ color: 0x10151d }));
     skirt.rotation.x = -Math.PI / 2; skirt.position.y = (tr ? Math.min(tr.hMin, tr.water) : 0) - 30; this.root.add(skirt);
+    this.detailMesh = null; this.detailTex = null;
+    if (dt) this.buildDetail(tr!);
     this.paintTerrain();
+  }
+
+  // The tank battle area at 2 m (shown on an 8 m mesh; the picture uses every sample).
+  private buildDetail(tr: Terrain) {
+    const d = tr.detail!; const step = Math.max(1, Math.round(d.w / 512));
+    const nx = Math.floor((d.w - 1) / step) + 1, nz = Math.floor((d.h - 1) / step) + 1;
+    const pos = new Float32Array(nx * nz * 3), uv = new Float32Array(nx * nz * 2);
+    for (let r = 0; r < nz; r++) for (let c = 0; c < nx; c++) {
+      const k = r * nx + c, x = d.x0 + c * step * d.cell, z = d.z0 + r * step * d.cell;
+      pos[k * 3] = x; pos[k * 3 + 1] = Math.max(d.v[(r * step) * d.w + c * step], tr.water); pos[k * 3 + 2] = -z;
+      uv[k * 2] = (c * step) / (d.w - 1); uv[k * 2 + 1] = (r * step) / (d.h - 1);
+    }
+    const idx = new Uint32Array((nx - 1) * (nz - 1) * 6); let q = 0;
+    for (let r = 0; r < nz - 1; r++) for (let c = 0; c < nx - 1; c++) {
+      const a = r * nx + c, b = a + 1, e = a + nx, f = e + 1;
+      idx[q++] = a; idx[q++] = b; idx[q++] = e; idx[q++] = b; idx[q++] = f; idx[q++] = e;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2)); g.setIndex(new THREE.BufferAttribute(idx, 1));
+    const cv = document.createElement('canvas'); cv.width = cv.height = Math.min(2048, d.w);
+    this.detailTex = new THREE.CanvasTexture(cv); this.detailTex.colorSpace = THREE.SRGBColorSpace; this.detailTex.anisotropy = 8;
+    this.detailMesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: this.detailTex, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
+    this.root.add(this.detailMesh);
   }
 
   paintTerrain() {
@@ -528,8 +621,10 @@ export class Viewer {
     const img = ctx.createImageData(W, W); const d = img.data;
     const ramp = [[58, 74, 54], [92, 104, 72], [128, 124, 92], [150, 140, 118], [186, 180, 170], [225, 224, 220]];
     if (tr) {
-      const n = tr.n, h = tr.h, span = Math.max(1, tr.hMax - Math.max(tr.hMin, tr.water));
-      const base = Math.max(tr.hMin, tr.water);
+      // with a tank battle area, colour the whole map on its height scale so the two grids match
+      const lo = tr.detail ? tr.detail.hMin : tr.hMin, hi = tr.detail ? tr.detail.hMax : tr.hMax;
+      const n = tr.n, h = tr.h, span = Math.max(1, hi - Math.max(lo, tr.water));
+      const base = Math.max(lo, tr.water);
       const lx = -0.6, lz = 0.6, ly = 0.55; const ll = Math.hypot(lx, ly, lz);
       for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
         const v = h[r * n + c];
@@ -569,6 +664,44 @@ export class Viewer {
       ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2; ctx.strokeRect(1, 1, W - 2, W - 2);
     }
     this.terrainTex.needsUpdate = true;
+    if (this.detailTex && tr && tr.detail) this.paintDetail(tr);
+  }
+
+  private paintDetail(tr: Terrain) {
+    const d = tr.detail!, cv = this.detailTex!.image as HTMLCanvasElement, W = cv.width, ctx = cv.getContext('2d')!;
+    const img = ctx.createImageData(W, W), px = img.data;
+    const ramp = [[58, 74, 54], [92, 104, 72], [128, 124, 92], [150, 140, 118], [186, 180, 170], [225, 224, 220]];
+    // colour by height within the battle area (it is small; whole-map colours would be flat)
+    const base = Math.max(d.hMin, tr.water), span = Math.max(1, d.hMax - base);
+    const lx = -0.6, lz = 0.6, ly = 0.55, ll = Math.hypot(lx, ly, lz);
+    const k = (d.w - 1) / (W - 1), v = d.v, w = d.w;
+    for (let r = 0; r < W; r++) for (let c = 0; c < W; c++) {
+      const sc = Math.min(d.w - 2, Math.round(c * k)), sr = Math.min(d.h - 2, Math.round(r * k));
+      const h = v[sr * w + sc]; const o = ((W - 1 - r) * W + c) * 4;
+      if (h <= tr.water + 0.3) { px[o] = 38; px[o + 1] = 58; px[o + 2] = 82; px[o + 3] = 255; continue; }
+      let f = Math.min(0.999, Math.max(0, (h - base) / span)) * (ramp.length - 1);
+      const i = Math.floor(f); f -= i;
+      let R = ramp[i][0] + (ramp[i + 1][0] - ramp[i][0]) * f, G = ramp[i][1] + (ramp[i + 1][1] - ramp[i][1]) * f, B = ramp[i][2] + (ramp[i + 1][2] - ramp[i][2]) * f;
+      let shd = 1;
+      if (this.settings.shade) {
+        const cl = Math.max(0, sc - 1), cr = sc + 1, rd = Math.max(0, sr - 1), ru = sr + 1;
+        const dx = (v[sr * w + cr] - v[sr * w + cl]) / ((cr - cl) * d.cell) * 1.6;
+        const dz = (v[ru * w + sc] - v[rd * w + sc]) / ((ru - rd) * d.cell) * 1.6;
+        const nl = Math.hypot(dx, 1, dz);
+        shd = Math.min(1.3, 0.5 + 0.62 * Math.max(0, (-dx * lx + ly - dz * lz) / (nl * ll)) / (ly / ll));
+      }
+      px[o] = Math.min(255, R * shd); px[o + 1] = Math.min(255, G * shd); px[o + 2] = Math.min(255, B * shd); px[o + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    if (this.settings.grid) {
+      // 250 m grid: the scale for tank ranges
+      const size = (d.w - 1) * d.cell;
+      ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,255,255,0.13)';
+      for (let m = Math.ceil(d.x0 / 250) * 250; m <= d.x0 + size; m += 250) { const p = (m - d.x0) / size * W; ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, W); ctx.stroke(); }
+      for (let m = Math.ceil(d.z0 / 250) * 250; m <= d.z0 + size; m += 250) { const p = W - (m - d.z0) / size * W; ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(W, p); ctx.stroke(); }
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 3; ctx.strokeRect(1.5, 1.5, W - 3, W - 3);
+    this.detailTex!.needsUpdate = true;
   }
 
   // ---------- camera ----------
@@ -594,6 +727,20 @@ export class Viewer {
 
   homeCamera() {
     const s = this.session!; let cx = 0, cz = 0, n = 0;
+    if (s.ground) {
+      // ground battle: look at the tank battle area from about 3 km
+      for (const v of this.byKind.ground) if (v.u.player >= 0) { const m = v.u.n >> 1; cx += v.u.x[m]; cz += v.u.z[m]; n++; }
+      if (n) { cx /= n; cz /= n; }
+      const d = s.terrain && s.terrain.detail ? s.terrain.detail : null;
+      if (d) { cx = d.x0 + d.w * d.cell / 2; cz = d.z0 + d.h * d.cell / 2; }
+      const gy = groundHeight(s.terrain, cx, cz);
+      this.controls.target.set(cx, gy, -cz);
+      this.camera.position.set(cx - 600, gy + 2600, -cz + 2400);
+      this.follow = -1; this.followHas = false; this.controls.zoomToCursor = true; this.controls.update();
+      const W = this.container.clientWidth || 800, H = this.container.clientHeight || 600;
+      this.cam2d.position.set(cx, 300000, -cz); this.cam2d.zoom = Math.min(W, H) / 5000; this.cam2d.updateProjectionMatrix();
+      return;
+    }
     for (const v of this.byKind.aircraft) if (v.u.player >= 0) { const m = v.u.n >> 1; cx += v.u.x[m]; cz += v.u.z[m]; n++; }
     if (n) { cx /= n; cz /= n; }
     const gy = groundHeight(s.terrain, cx, cz);
@@ -618,12 +765,13 @@ export class Viewer {
     this.controls.zoomToCursor = id < 0;
     if (id >= 0 && this.mode === '2d') {
       this.unitPos(this.vis[id].u, this.t, this.vP); this.cam2d.position.x = this.vP.x; this.cam2d.position.z = this.vP.z;
-      if (this.cam2d.zoom < 0.02) { this.cam2d.zoom = 0.02; this.cam2d.updateProjectionMatrix(); }
+      const minZ = this.vis[id].u.kind === 'ground' ? 0.3 : 0.02;   // tanks: about 3 m per pixel
+      if (this.cam2d.zoom < minZ) { this.cam2d.zoom = minZ; this.cam2d.updateProjectionMatrix(); }
     } else if (id >= 0) {
       const v = this.vis[id];
       this.unitPos(v.u, this.t, this.vP);
       const off = this.camera.position.clone().sub(this.controls.target);
-      const want = v.u.kind === 'missile' ? 2500 : 6000;
+      const want = v.u.kind === 'missile' ? 2500 : v.u.kind === 'ground' ? 250 : 6000;
       if (off.length() > want * 4) off.setLength(want);
       this.controls.target.copy(this.vP); this.camera.position.copy(this.vP).add(off);
       this.followPrev.copy(this.vP); this.followHas = true;
@@ -664,7 +812,7 @@ export class Viewer {
     if (!is2d) {
       this.controls.update();
       // never below the ground
-      const gy = groundHeight(ses.terrain, this.camera.position.x, -this.camera.position.z) + 30;
+      const gy = groundHeight(ses.terrain, this.camera.position.x, -this.camera.position.z) + (ses.ground ? 4 : 30);
       if (this.camera.position.y < gy) this.camera.position.y = gy;
     }
     cam.updateMatrixWorld();
@@ -806,7 +954,6 @@ export class Viewer {
     }
     this.sticks.end(); this.sticks.mesh.visible = st.sticks && !is2d;
     this.desig.end(); this.vectors.end();
-    this.deadPts.geometry.setDrawRange(0, nDead); deadPos.needsUpdate = true; deadCol.needsUpdate = true;
 
     // where active-radar missiles went active ("pitbull"), shown with the missile's path
     {
@@ -854,7 +1001,11 @@ export class Viewer {
     fill(this.cmPts, this.byKind.countermeasure, st.cms, u => u.cmType === 'Flare' ? COLORS.flare : COLORS.chaff);
     fill(this.bombPts, this.byKind.bomb, st.bombs, () => COLORS.bomb);
     this.groundPts.visible = st.ground;
-    this.groundPts.geometry.setDrawRange(0, st.ground ? this.byKind.ground.length : 0);
+    this.groundPts.geometry.setDrawRange(0, st.ground ? this.nStaticGround : 0);
+    nDead = this.updateGround(t, nDead, pxK, deadPos, deadCol);
+    this.updateShells(t);
+
+    this.deadPts.geometry.setDrawRange(0, nDead); deadPos.needsUpdate = true; deadCol.needsUpdate = true;
 
     // selection ring + measure line
     const sel = this.selected >= 0 ? this.vis[this.selected] : null;
@@ -872,6 +1023,138 @@ export class Viewer {
     this.updateMapOverlays(W, H);
     this.updateLabels();
     this.renderer.render(this.scene, cam);
+  }
+
+  // ---------- ground vehicles ----------
+  private updateGround(t: number, nDead: number, pxK: number, deadPos: THREE.BufferAttribute, deadCol: THREE.BufferAttribute): number {
+    const ses = this.session!, st = this.settings, cam = this.cam, is2d = this.mode === '2d', s = this.s;
+    const c = new THREE.Color();
+    this.gunSeg.begin();
+    for (const v of this.byKind.ground) {
+      if (!v.mesh) continue;
+      const u = v.u;
+      const allowed = st.ground && !this.playerHidden(u) && (st.ai || u.player >= 0);
+      const alive = t >= u.tStart && t <= u.tEnd, ended = t > u.tEnd;
+      v.alive = alive; v.shown = allowed && alive; v.onScreen = false;
+      if (!allowed || !alive) {
+        v.mesh.visible = false; v.turret!.visible = false;
+        if (allowed && ended && u.destroyed && st.dead && u.player >= 0) {
+          const k = u.n - 1;
+          deadPos.setXYZ(nDead, u.x[k], u.y[k] + 2, -u.z[k]); c.set(v.color).lerp(new THREE.Color(COLORS.dead), 0.5); deadCol.setXYZ(nDead, c.r, c.g, c.b); nDead++;
+        }
+        const tr = v.trail!;
+        if (!allowed || !ended || !st.dead || st.acTrail === 0) { tr.mesh.visible = false; continue; }
+      } else {
+        sampleAt(u, t, s);
+        v.px = s.x; v.py = s.y; v.pz = -s.z;
+        const h = s.heading * D2R, p = is2d ? 0 : s.pitch * D2R, r = is2d ? 0 : s.roll * D2R;
+        const sh = Math.sin(h), ch = Math.cos(h), sp = Math.sin(p), cp = Math.cos(p), sr = Math.sin(r), cr = Math.cos(r);
+        const fx = sh * cp, fy = sp, fz = ch * cp;
+        const rx0 = ch, rz0 = -sh, ux0 = -sh * sp, uy0 = cp, uz0 = -ch * sp;
+        const rx = rx0 * cr - ux0 * sr, ry = -uy0 * sr, rz = rz0 * cr - uz0 * sr;
+        const ux = ux0 * cr + rx0 * sr, uy = uy0 * cr, uz = uz0 * cr + rz0 * sr;
+        const dist = is2d ? 1 : Math.hypot(cam.position.x - v.px, cam.position.y - v.py, cam.position.z - v.pz);
+        const wantPx = (u.player >= 0 ? 18 : 12) * (v.focus ? 1.3 : 1);
+        const sc = Math.max(1, wantPx * pxK * dist / TANK_LEN);
+        this.vX.set(rx, ry, -rz); this.vY.set(ux, uy, -uz); this.vZ.set(-fx, -fy, fz);
+        this.tmpM.makeBasis(this.vX, this.vY, this.vZ); this.tmpM.scale(this.vP.set(sc, sc, sc)); this.tmpM.setPosition(v.px, v.py, v.pz);
+        v.mesh.matrix.copy(this.tmpM); v.mesh.visible = true;
+        // turret: recorded world gun bearing; sits on the hull roof
+        const gb = u.gunBearing ? lerpGun(u.gunBearing, s.i, s.f, u.n) : NaN;
+        const ge = u.gunElev && !is2d ? lerpCol(u.gunElev, s, u.n) : 0;
+        const tb = (isFinite(gb) ? gb : s.heading) * D2R, te = (isFinite(ge) ? ge : 0) * D2R;
+        const tsh = Math.sin(tb), tch = Math.cos(tb), tse = Math.sin(te), tce = Math.cos(te);
+        const ox = v.px + ux * 1.7 * sc, oy = v.py + uy * 1.7 * sc, oz = v.pz - uz * 1.7 * sc;
+        this.vX.set(tch, 0, tsh); this.vZ.set(-tsh * tce, -tse, tch * tce); this.vY.crossVectors(this.vZ, this.vX).normalize();
+        this.tmpM.makeBasis(this.vX, this.vY, this.vZ); this.tmpM.scale(this.vP.set(sc, sc, sc)); this.tmpM.setPosition(ox, oy, oz);
+        v.turret!.matrix.copy(this.tmpM); v.turret!.visible = true;
+        // gun line: where the gun points, out to 2 km or the ground
+        if (isFinite(gb) && (st.gunLines === 'all' || (st.gunLines === 'focus' && v.focus))) {
+          let L = 2000; const dx = tsh * tce, dy = tse, dz = tch * tce;
+          for (let k = 25; k <= 2000; k += 25) { if (oy + dy * k < groundHeight(ses.terrain, ox + dx * k, -oz + dz * k)) { L = k; break; } }
+          c.set(v.color); const c2 = c.clone().multiplyScalar(0.35);
+          this.gunSeg.add(ox, oy, oz, ox + dx * L, oy + dy * L, oz - dz * L, c, c2);
+        }
+        this.vP.set(v.px, v.py, v.pz).project(cam);
+        const W = this.container.clientWidth || 800, H = this.container.clientHeight || 600;
+        v.onScreen = this.vP.z < 1 && Math.abs(this.vP.x) < 1.05 && Math.abs(this.vP.y) < 1.05;
+        v.sx = (this.vP.x * 0.5 + 0.5) * W; v.sy = (-this.vP.y * 0.5 + 0.5) * H;
+      }
+      // track on the ground
+      const tr = v.trail!; const trailLen = st.acTrail;
+      if (trailLen === 0) { tr.mesh.visible = false; continue; }
+      const headI = alive ? idxAt(u, t) : u.n - 1;
+      let startI = 0;
+      if (trailLen > 0) startI = idxAt(u, Math.max(0, t - trailLen * 1000)) + (t - trailLen * 1000 > u.t[0] ? 1 : 0);
+      startI = Math.min(startI, headI);
+      const un = tr.mat.uniforms;
+      un.uRibbon.value = 0; un.uWidth.value = (st.lineWidth || 2) + (v.focus ? 1 : 0);
+      un.uHead.value = (t - ses.t0) / 1000; un.uFade.value = trailLen > 0 ? trailLen : 0;
+      tr.update(startI, headI, alive ? [v.px, v.py + 0.6, v.pz] : null, null, 1);
+    }
+    this.gunSeg.end();
+    return nDead;
+  }
+
+  // ---------- shells ----------
+  // Arcs are computed by the decoder from the recorded gun direction and the
+  // shell's figures; drawn up to where the shell is at time t, then kept for
+  // shellKeep seconds after it lands.
+  private updateShells(t: number) {
+    const ses = this.session!, st = this.settings, sh = ses.shots;
+    this.shellSeg.begin(); this.mgSeg.begin();
+    const ip = this.impactPts.geometry.getAttribute('position') as THREE.BufferAttribute, ic = this.impactPts.geometry.getAttribute('color') as THREE.BufferAttribute;
+    let nImp = 0, nHead = 0;
+    const hp = this.headPts.geometry.getAttribute('position') as THREE.BufferAttribute, hc = this.headPts.geometry.getAttribute('color') as THREE.BufferAttribute;
+    if (sh && st.ground && (st.shells || st.mgRounds)) {
+      const keepMs = st.shellKeep < 0 ? Infinity : st.shellKeep * 1000;
+      const from = st.shellKeep < 0 ? -Infinity : t - keepMs - 8000;
+      let lo = 0, hi = sh.list.length;
+      if (isFinite(from)) while (lo < hi) { const m = (lo + hi) >> 1; if (sh.list[m].t < from) lo = m + 1; else hi = m; }
+      const c = new THREE.Color(), c2 = new THREE.Color(), white = new THREE.Color(0xffffff), tracer = new THREE.Color(0xffd27a);
+      const capC = this.shellSeg.cap, capM = this.mgSeg.cap;
+      let usedC = 0, usedM = 0;
+      for (let i = lo; i < sh.list.length; i++) {
+        const s = sh.list[i];
+        if (s.t > t) break;
+        if (s.n < 2) continue;
+        const isMG = s.cls === 'mg';
+        if (isMG ? !st.mgRounds : (!st.shells || (s.cls !== 'cannon'))) continue;
+        const sv = this.vis[s.unit]; if (!sv || this.playerHidden(sv.u) || (!st.ai && sv.u.player < 0)) continue;
+        const landed = t >= s.tEnd;
+        if (landed && t - s.tEnd > keepMs) continue;
+        const seg = isMG ? this.mgSeg : this.shellSeg;
+        // fade after landing
+        const age = landed ? (t - s.tEnd) / Math.max(1, Math.min(keepMs, 30000)) : 0;
+        const fade = landed ? Math.max(0.25, 1 - age * 0.75) : 1;
+        c.set(sv.color);
+        if (isMG) c.lerp(tracer, 0.55); else c.lerp(white, s.kill ? 0.55 : 0.25);
+        c.multiplyScalar(fade); c2.copy(c).multiplyScalar(0.8);
+        const f = (t - s.t) / sh.dt;
+        const k = Math.min(s.n - 1, Math.floor(f));
+        const need = k + 1;
+        if (isMG ? usedM + need > capM : usedC + need > capC) continue;
+        const X = sh.x, Y = sh.y, Z = sh.z, b = s.p0;
+        for (let j = 0; j < k; j++) seg.add(X[b + j], Y[b + j], -Z[b + j], X[b + j + 1], Y[b + j + 1], -Z[b + j + 1], c2, c);
+        let hx = X[b + k], hy = Y[b + k], hz = Z[b + k];
+        if (k < s.n - 1) {
+          const ff = f - k; hx += (X[b + k + 1] - hx) * ff; hy += (Y[b + k + 1] - hy) * ff; hz += (Z[b + k + 1] - hz) * ff;
+          seg.add(X[b + k], Y[b + k], -Z[b + k], hx, hy, -hz, c2, c);
+          // the round itself
+          if (nHead < 8192) { hp.setXYZ(nHead, hx, hy, -hz); if (isMG) hc.setXYZ(nHead, 1, 0.82, 0.45); else hc.setXYZ(nHead, 1, 1, 0.92); nHead++; }
+        }
+        if (isMG) usedM += need; else usedC += need;
+        // flash where it landed, for a second
+        if (landed && t - s.tEnd < 1200 && nImp < 4096 && (s.end === 'ground' || s.end === 'vehicle' || s.end === 'aircraft')) {
+          const e = b + s.n - 1; ip.setXYZ(nImp, X[e], Y[e] + 0.5, -Z[e]);
+          if (s.end === 'vehicle' || s.end === 'aircraft') c.set(s.kill ? 0xff4040 : 0xffffff); else c.set(0xffb060);
+          ic.setXYZ(nImp, c.r, c.g, c.b); nImp++;
+        }
+      }
+    }
+    this.shellSeg.end(); this.mgSeg.end();
+    this.impactPts.geometry.setDrawRange(0, nImp); ip.needsUpdate = true; ic.needsUpdate = true;
+    this.headPts.geometry.setDrawRange(0, nHead); hp.needsUpdate = true; hc.needsUpdate = true;
   }
 
   // ---------- launch-zone rings ----------
@@ -936,7 +1219,7 @@ export class Viewer {
     if (st.lblType || !p) parts.push(u.name);
     const line2: string[] = [];
     sampleAt(u, this.t, this.s);
-    if (st.lblAlt) line2.push(fmtAlt(this.s.y, st.units));
+    if (st.lblAlt && u.kind !== 'ground') line2.push(fmtAlt(this.s.y, st.units));
     if (st.lblSpeed) line2.push(fmtSpeed(lerpCol(u.speed, this.s, u.n), st.units));
     return parts.join(' · ') + (line2.length ? '\n' + line2.join('  ') : '');
   }
@@ -946,8 +1229,9 @@ export class Viewer {
     const refreshText = now - this.lastLabelText > 200; if (refreshText) this.lastLabelText = now;
     // Labels that would sit on top of one another are dropped, least important first.
     const want: Vis[] = [];
-    for (const kind of ['aircraft', 'missile']) {
+    for (const kind of ['aircraft', 'ground', 'missile']) {
       for (const v of this.byKind[kind]) {
+        if (!v.mesh) continue;
         let w = v.shown && v.onScreen;
         if (w) {
           if (kind === 'missile') w = st.missileLabels && (st.labels === 'all' || (st.labels === 'focus' && v.focus));
@@ -956,7 +1240,7 @@ export class Viewer {
         if (w) want.push(v); else if (v.label && v.label.style.display !== 'none') v.label.style.display = 'none';
       }
     }
-    const rank = (v: Vis) => (v.u.id === this.selected ? 0 : v.focus ? 1 : v.u.kind === 'aircraft' ? (v.u.ai ? 3 : 2) : 4);
+    const rank = (v: Vis) => (v.u.id === this.selected ? 0 : v.focus ? 1 : v.u.kind === 'aircraft' || (v.u.kind === 'ground' && v.u.player >= 0) ? (v.u.ai ? 3 : 2) : v.u.kind === 'ground' ? 5 : 4);
     want.sort((a, b) => rank(a) - rank(b));
     const boxes: number[] = [];
     for (const v of want) {
@@ -983,9 +1267,9 @@ export class Viewer {
   // ---------- picking ----------
   pick(x: number, y: number): number {
     let best = -1, bd = 18;
-    for (const kind of ['aircraft', 'missile']) {
+    for (const kind of ['aircraft', 'ground', 'missile']) {
       for (const v of this.byKind[kind]) {
-        if (!v.shown || !v.onScreen) continue;
+        if (!v.shown || !v.onScreen || !v.mesh) continue;
         const d = Math.hypot(v.sx - x, v.sy - y) + (kind === 'missile' ? 4 : 0);
         if (d < bd) { bd = d; best = v.u.id; }
       }
@@ -1020,3 +1304,11 @@ function velAt(u: Unit, t: number): number[] {
   return dt > 0 ? [(u.x[b] - u.x[a]) / dt, (u.y[b] - u.y[a]) / dt, -(u.z[b] - u.z[a]) / dt] : [0, 0, 0];
 }
 function speedAt(u: Unit, t: number): number { const v = velAt(u, t); return Math.hypot(v[0], v[1], v[2]); }
+
+// gun bearing between two samples (wraps through north), NaN when unknown
+function lerpGun(a: Float32Array, i: number, f: number, n: number): number {
+  const j = Math.min(n - 1, i + 1), x = a[i], y = a[j];
+  if (!isFinite(x)) return y; if (!isFinite(y)) return x;
+  const d = ((y - x + 540) % 360) - 180;
+  return x + d * f;
+}

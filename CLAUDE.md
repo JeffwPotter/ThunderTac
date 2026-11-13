@@ -6,7 +6,8 @@ when working on this repository.
 ## 1. Project Purpose & Scope Boundaries
 
 ThunderTac is a standalone tactical replay viewer and post-match debrief tool for
-War Thunder Air Realistic Battles (Air RB), built for private use by the author
+War Thunder Air Realistic Battles (Air RB) and, from v0.10.0, Ground Realistic
+Battles (Ground RB; `docs/ground.md`), built for private use by the author
 (in-game name `spurzz`) and his wingman. The author does not write code; he tests
 and steers. Explain changes in plain language.
 
@@ -29,6 +30,10 @@ and steers. Explain changes in plain language.
   2. First real test of the telemetry recorder (field names of `/state` and
      `/indicators` are not yet verified against a live game; each log stores the
      names it saw in `keys`).
+  3. Ground battles (v0.10.0): tank attitude, gun direction, shots with computed
+     shell arcs (`decoder/cmd/wtdecode/wtr_ground.go`), vehicle weapon catalogue
+     (`decoder/cmd/wtassets/ground_catalog.go`), 2 m battle-area terrain. Next:
+     a ground debrief.
 * **Tried and rejected (with data, v0.9.0; see `docs/analysis.md`):** extra
   turning drag against beaming targets; smoothing aircraft speeds.
 
@@ -71,6 +76,19 @@ and steers. Explain changes in plain language.
   `[0, 1, 60, 0]` for AIM-7M/AIM-120/R-77 but `27.5 m` or `0.5 m` for others.
   If outside sources disagree with the game files, tell the user rather than
   changing the code.
+
+### C2. Ground battles (`docs/ground.md`)
+* Hull heading = `raw16 × 360/65536 + 90°`; roll = −raw (checked against terrain
+  slope); world gun bearing = `90° − q0`, elevation = `q1`. Verified on three
+  Ground RB matches; the `ground_*` self-checks guard them.
+* Weapon index in the replay = entry in the vehicle's `commonWeapons` list.
+  **14.7 mm and smaller = machine gun; larger = cannon** (user's rule). A gun
+  that can also fire a gun-launched missile stays a cannon.
+* Shell drag uses the game's `ballisticCaliber` (dart diameter) when present.
+* Shell arcs are computed, never recorded. Only kill shots may have their
+  elevation adjusted (≤ 1.5°, stored as `elevAdjDeg`); never move other shots.
+* `shots.json` is written only when the match has player ground vehicles: air
+  battle output must stay unchanged (golden).
 
 ### D. Known replay data limits (`docs/analysis.md`)
 1. ~4 Hz position sampling. Do not take unsmoothed two-point differences for

@@ -117,6 +117,12 @@ func (index killTimelineIndex) exactKiller(kill packetkill.KillEntry) *track {
 		candidates = append(candidates, index.airByUID[kill.KillerUid]...)
 		candidates = append(candidates, index.groundByUID[kill.KillerUid]...)
 	}
+	if len(candidates) == 0 && kill.ResolvedKiller != nil {
+		// Ground battles: the ECS manager keeps only the newest instance of an
+		// entity, so the resolved pointer can differ from the snapshot held by
+		// the vehicle's track. The ground UID still identifies it.
+		candidates = append(candidates, index.groundByUID[kill.KillerUid]...)
+	}
 	var found *track
 	for _, tr := range candidates {
 		if !killTrackContains(tr, kill.CurrentTime) {
@@ -145,6 +151,12 @@ func (index killTimelineIndex) exactVictim(kill packetkill.KillEntry) *track {
 		}
 	} else {
 		candidates = append(candidates, index.airByUID[kill.VictimUid]...)
+		candidates = append(candidates, index.groundByUID[kill.VictimUid]...)
+	}
+	if len(candidates) == 0 && kill.ResolvedVictim != nil {
+		// Ground battles: the ECS manager keeps only the newest instance of an
+		// entity, so the resolved pointer can differ from the snapshot held by
+		// the vehicle's track. The ground UID still identifies it.
 		candidates = append(candidates, index.groundByUID[kill.VictimUid]...)
 	}
 	var found *track

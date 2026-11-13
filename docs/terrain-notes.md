@@ -150,9 +150,7 @@ must be under GPL-3.0 (or AGPL-3.0, like the rest of the decoder). No obligation
 
 ## Still to do
 1. `avn_mediterranean_port` (naval) has no terrain; not needed for air.
-2. Ground battles: tank maps also carry a detailed HM2 for the 4 km tank area
-   (2 m cells, e.g. Northern India). The `.wtt` keeps only the 128 m whole-map grid;
-   a detailed insert can be added when ground battles are worked on.
+2. ~~Ground battles: detailed tank-area HM2~~ done in v0.10.0 (schema 2, below).
 
 ## Terrain asset file (`.wtt`, schema 1)
 A ZIP with `terrain.json` and `height.u16`.
@@ -162,3 +160,13 @@ A ZIP with `terrain.json` and `height.u16`.
 Maps are square; if the `.blk` corners are not, the larger side is used from `x0`,`z0`.
 `height.u16`: `gridSize²` little-endian uint16, rows south → north, columns west → east;
 `height = hMin + v * (hMax − hMin) / 65535`. Cell centres at `x0 + (col + 0.5) * cellM`.
+
+### Schema 2 (v0.10.0): the tank battle area
+When the level holds a fine HM2 (cell ≤ 8 m) besides the one used for the whole
+map, the `.wtt` also carries `detail.u16` and `terrain.json` gains
+`detail { w, h, x0, z0, cellM, hMin, hMax }` (and `schema: 2`). Samples sit at
+`x0 + col*cellM`, `z0 + row*cellM` (corners, not cell centres), rows south →
+north, at the HM2's own cell size (2 m on all three tank maps checked: 2048 × 2048,
+4.1 km), subsampled only above 4096 × 4096. Ground vehicles' positions sit on it
+to a median of 0.005 m. Readers that only know schema 1 ignore it. The decoder
+uses it for shell arcs (`heightFine`); aircraft rules keep the 128 m grid.

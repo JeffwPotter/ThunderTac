@@ -46,6 +46,11 @@ type PositionRetainerParser struct {
 	GroundEntities map[uint64]*packetecs2.Entity
 	// GroundEnds contains only destruction times observed for an associated EID.
 	GroundEnds map[uint64]uint32
+	// GroundPoses holds hull and gun attitude, one per GroundPaths sample.
+	GroundPoses map[uint64][]GroundPose
+	// GroundShots holds every weapon firing seen for a ground unit.
+	GroundShots map[uint64][]GroundShot
+	weaponLast  map[groundWeaponKey]weaponState
 
 	ecs               *packetecs2.PacketECSParser
 	groundEnabled     bool
@@ -71,6 +76,9 @@ func newPositionRetainerParser(ecs *packetecs2.PacketECSParser, groundEnabled bo
 		GroundPaths:    map[uint64][]game.SpaceTime{},
 		GroundEntities: map[uint64]*packetecs2.Entity{},
 		GroundEnds:     map[uint64]uint32{},
+		GroundPoses:    map[uint64][]GroundPose{},
+		GroundShots:    map[uint64][]GroundShot{},
+		weaponLast:     map[groundWeaponKey]weaponState{},
 		ecs:            ecs,
 		groundEnabled:  groundEnabled,
 		deltaHistories: map[uint16]*groundDeltaHistory{},

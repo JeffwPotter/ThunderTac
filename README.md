@@ -44,7 +44,14 @@ window does not appear, run `bin\wtviewer-console.exe` to see messages (or read
 `%LocalAppData%\WTReplayViewer\viewer.log`); `bin\wtviewer.exe -browser`
 opens it in Edge/your browser instead.
 
-## What is here (v0.9.0, 2026-11-12)
+## Ground battles (v0.10.0)
+Ground RB matches convert and play like air ones: tanks with turrets that follow
+the recorded gun direction, shell arcs (cannon vs machine gun), kills, and the
+2 m battle-area terrain. After updating, run `tools\update-game-data.bat` once:
+it builds the vehicle weapon catalogue and adds the battle areas to every map.
+Details: `docs\ground.md`.
+
+## What is here (v0.10.0, 2026-11-12)
 
 | Folder | What |
 |---|---|

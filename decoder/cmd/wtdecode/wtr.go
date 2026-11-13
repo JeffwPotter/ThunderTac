@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	packetmovement "github.com/maxsupermanhd/wrpl-inspector/v3/wrpl/packet/parser/movement"
 	"math"
 	"os"
 	"path/filepath"
@@ -29,7 +30,7 @@ import (
 
 const (
 	wtrSchemaVersion  = 1
-	wtrDecoderVersion = "0.8.0"
+	wtrDecoderVersion = "0.9.0"
 	wtrSnapshotOrigin = "wrpl-acmi dev @ 9ed43b9f108b062b408b1d4d0c2a62d46b00bfe4 (2026-11-02), AGPL-3.0"
 )
 
@@ -93,14 +94,16 @@ type wtrCM struct {
 }
 
 type wtrPlayer struct {
-	Slot    int            `json:"slot"`
-	Name    string         `json:"name"`
-	Clan    string         `json:"clan,omitempty"`
-	Title   string         `json:"title,omitempty"`
-	Team    int            `json:"team"`
-	UserID  uint64         `json:"userId,omitempty"`
-	Units   []int          `json:"units"`
-	Results map[string]any `json:"results,omitempty"`
+	Slot   int    `json:"slot"`
+	Name   string `json:"name"`
+	Clan   string `json:"clan,omitempty"`
+	Title  string `json:"title,omitempty"`
+	Team   int    `json:"team"`
+	UserID uint64 `json:"userId,omitempty"`
+	Units  []int  `json:"units"`
+	// Vehicles lists the player's ground vehicles in time order (one per spawn).
+	Vehicles []int          `json:"vehicles,omitempty"`
+	Results  map[string]any `json:"results,omitempty"`
 }
 
 type wtrEvent struct {
@@ -151,6 +154,9 @@ type wtrInput struct {
 	radarModes *radarModeExport
 	ecs        *packetecs2.PacketECSParser
 	airfields  []airfieldMarker
+	// ground battles: attitude per sample and weapon firings, by ground key
+	groundPoses map[uint64][]packetmovement.GroundPose
+	groundShots map[uint64][]packetmovement.GroundShot
 }
 
 type wtrBin struct {
@@ -280,6 +286,8 @@ func writeWTR(path string, in wtrInput) ([]wtrCheck, map[string]int, error) {
 	cat := wtrLoadCatalog()
 	mapData := wtrBuildMap(in, cat, terrain)
 	groundEnds := 0
+	groundKeyOf := map[int]uint64{} // unit id -> ground replay key, for ground vehicles
+	groundHeading := map[int][]float32{}
 
 	// first pass: assign ids to tracks that have a lifetime
 	for _, tr := range in.tracks {
@@ -448,6 +456,22 @@ func writeWTR(path string, in wtrInput) ([]wtrCheck, map[string]int, error) {
 		case "bomb":
 			u.BombNoPath = tr.bombPositionOnly
 			u.Estimated = u.Estimated || tr.bombEstimate != nil
+		case "ground":
+			if tr.key.groundEntity && tr.key.id&groundUnitUIDNamespace != 0 && !tr.groundStatic {
+				if cols, ok := wtrGroundPoseColumns(samples, in.groundPoses[tr.key.id]); ok {
+					u.Columns = append(u.Columns, bin.f32("heading", cols[0]), bin.f32("pitch", cols[1]), bin.f32("roll", cols[2]),
+						bin.f32("gunBearing", cols[3]), bin.f32("gunElev", cols[4]))
+					groundHeading[id] = cols[0]
+				}
+				if len(in.groundShots[tr.key.id]) > 0 || len(in.groundPoses[tr.key.id]) > 0 {
+					groundKeyOf[id] = tr.key.id
+				}
+			}
+			if cat != nil && u.Class != "" {
+				if n := cat.vehicles[groundClassKey(u.Class)]; n != "" && strings.HasPrefix(u.Name, "Ground unit") {
+					u.Name = n
+				}
+			}
 		}
 		units = append(units, u)
 	}
@@ -496,6 +520,9 @@ func writeWTR(path string, in wtrInput) ([]wtrCheck, map[string]int, error) {
 		for _, u := range units {
 			if u.Player != nil && *u.Player == i && u.Kind == "aircraft" {
 				wp.Units = append(wp.Units, u.ID)
+			}
+			if u.Player != nil && *u.Player == i && u.Kind == "ground" {
+				wp.Vehicles = append(wp.Vehicles, u.ID)
 			}
 		}
 		playerTeam[i] = wp.Team
@@ -662,7 +689,12 @@ func writeWTR(path string, in wtrInput) ([]wtrCheck, map[string]int, error) {
 	}
 	sort.SliceStable(events, func(i, j int) bool { return events[i].T < events[j].T })
 
+	shotFile, shotStats := wtrBuildShots(in, units, groundKeyOf, live, events, terrain, bin)
+	for k, v := range shotStats {
+		counts[k] = v
+	}
 	checks := wtrSelfChecks(in, units, players, events, states, live, results)
+	checks = append(checks, wtrGroundChecks(units, live, shotFile, groundHeading)...)
 	checks = append(checks, wtrUndergroundCheck(units, live, terrain))
 	launches := wtrBuildLaunches(units, events, states, live, full, mapData)
 	stats := wtrBuildStats(units, players, launches, live, mapData)
@@ -673,7 +705,7 @@ func writeWTR(path string, in wtrInput) ([]wtrCheck, map[string]int, error) {
 	first := true
 	for _, u := range units {
 		counts[u.Kind]++
-		if u.Kind != "aircraft" {
+		if u.Kind != "aircraft" && !(u.Kind == "ground" && u.Player != nil) {
 			continue
 		}
 		if first || u.TStart < tFirst {
@@ -767,6 +799,13 @@ func writeWTR(path string, in wtrInput) ([]wtrCheck, map[string]int, error) {
 	}{
 		{"manifest.json", manifest}, {"players.json", players}, {"units.json", units},
 		{"events.json", events}, {"states.json", states}, {"launches.json", launches}, {"map.json", mapData}, {"stats.json", stats}, {"results.json", wtrJSONSafe(results)},
+	}
+	if shotFile != nil {
+		steps = append(steps, struct {
+			name string
+			v    any
+		}{"shots.json", shotFile})
+		manifest["files"] = append(manifest["files"].([]string), "shots.json")
 	}
 	for _, s := range steps {
 		if err := writeJSON(s.name, s.v); err != nil {
@@ -977,7 +1016,7 @@ func wtrSelfChecks(in wtrInput, units []wtrUnit, players []wtrPlayer, events []w
 			continue
 		}
 		humanPlayers++
-		if len(p.Units) > 0 {
+		if len(p.Units) > 0 || len(p.Vehicles) > 0 {
 			withAircraft++
 		}
 	}
@@ -994,7 +1033,7 @@ func wtrSelfChecks(in wtrInput, units []wtrUnit, players []wtrPlayer, events []w
 	// 5. shoot-downs vs deaths
 	playerDeaths := 0
 	for _, ev := range events {
-		if ev.Type == "kill" && ev.Victim != nil && units[*ev.Victim].Kind == "aircraft" && units[*ev.Victim].Player != nil {
+		if ev.Type == "kill" && ev.Victim != nil && (units[*ev.Victim].Kind == "aircraft" || units[*ev.Victim].Kind == "ground") && units[*ev.Victim].Player != nil {
 			playerDeaths++
 		}
 	}
@@ -1029,6 +1068,9 @@ func wtrSelfChecks(in wtrInput, units []wtrUnit, players []wtrPlayer, events []w
 	status = "pass"
 	if math.IsNaN(med) || med < 100 || med > 600 {
 		status = "fail"
+	}
+	if len(intervals) == 0 && wtrHasPlayerVehicles(units) {
+		status = "skipped" // ground battle without player aircraft
 	}
 	add("aircraft_rate", "Aircraft positions arrive at a steady rate", status, fmt.Sprintf("median %.0f ms between samples", med), "100–600 ms",
 		"Aircraft state packets (packet type 2, wrpl/packet/parser/fm) are being skipped or mis-framed.")
@@ -1115,6 +1157,10 @@ func wtrSelfChecks(in wtrInput, units []wtrUnit, players []wtrPlayer, events []w
 	switch {
 	case total == 0:
 		add("missile_kills", "Missile kills line up with a missile reaching the victim", "skipped", "no candidate kills", "at least 60%", "")
+	case float64(matched) < 0.6*float64(total) && wtrHasPlayerVehicles(units):
+		// ground battles: few air kills, and anti-aircraft vehicles and aircraft
+		// often kill with guns while a missile is still in the air
+		add("missile_kills", "Missile kills line up with a missile reaching the victim", "warn", fmt.Sprintf("%d of %d", matched, total), "at least 60%", "Ground battle: kills by guns while a missile was in the air are counted here too. Check only if air battles fail it.")
 	case float64(matched) < 0.6*float64(total):
 		add("missile_kills", "Missile kills line up with a missile reaching the victim", "fail", fmt.Sprintf("%d of %d", matched, total), "at least 60%", "Missile tracks and aircraft tracks disagree in time or space: check time stamps and 0xF11A decoding.")
 	default:

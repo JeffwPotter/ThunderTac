@@ -14,7 +14,7 @@ import (
 	"strings"
 )
 
-const analysisVersion = "a5" // a5: SARH dropped lock, guessed targets (v0.9.0)
+const analysisVersion = "a6" // a6: ground victims and SAM killers now linked to kills (v0.10.0); a5: SARH dropped lock, guessed targets (v0.9.0)
 
 const (
 	nearKm          = 40.0 // "enemy nearby"

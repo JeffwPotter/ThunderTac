@@ -9,6 +9,8 @@ $failed = 0
 Get-ChildItem (Join-Path $root "golden") -Filter *.checks.json | ForEach-Object {
   $session = $_.BaseName -replace '\.checks$', ''
   $zip = Join-Path $Replays "$session.zip"
+  # zips are often saved without the session ID's leading zeros (be95b... for 0be95b...)
+  if (-not (Test-Path $zip)) { $zip = Join-Path $Replays (($session -replace '^0+', '') + ".zip") }
   if (-not (Test-Path $zip)) { Write-Host "SKIP  $session (no $zip)"; return }
   $report = Join-Path $tmp "$session.json"
   & $exe -in $zip -wtr (Join-Path $tmp "$session.wtr") -check-report $report | Out-Null
