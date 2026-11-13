@@ -52,7 +52,7 @@ type wtrShot struct {
 	P0          int     `json:"p0"` // first arc point in the shot path columns
 	N           int     `json:"n"`  // number of arc points, every shotPathDtMs from T
 	TEnd        uint32  `json:"tEnd"`
-	End         string  `json:"end"` // vehicle | aircraft | ground | range | none
+	End         string  `json:"end"` // vehicle | aircraft | ground | object (building, wall, rock) | range | none
 	Hit         *int    `json:"hit,omitempty"`
 	Kill        bool    `json:"kill,omitempty"`
 	MissM       *int    `json:"missM,omitempty"` // kill shots: closest approach of the arc to the victim
@@ -462,6 +462,13 @@ func (c shotCtx) fly(shooter int, t0 uint32, pos [3]float64, bearingDeg, elevDeg
 				pts = append(pts, p)
 				return pts, "ground", -1, tms, miss
 			}
+		}
+		// Buildings and rocks stop a shell, except within 15 m of the gun (a tank
+		// sitting behind cover starts inside the object's box) and for shots
+		// known to have killed (the box is coarser than the object).
+		if victim < 0 && travelled > 15 && c.terrain != nil && c.terrain.obstacles != nil && c.terrain.obstacles.inside(p) {
+			pts = append(pts, p)
+			return pts, "object", -1, tms, miss
 		}
 		if step%2 == 0 { // vehicle checks every 10 ms (a 1,700 m/s round moves 17 m)
 			for _, cd := range cands {

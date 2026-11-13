@@ -47,8 +47,9 @@ opens it in Edge/your browser instead.
 ## Ground battles (v0.10.0)
 Ground RB matches convert and play like air ones: tanks with turrets that follow
 the recorded gun direction, shell arcs (cannon vs machine gun), kills, and the
-2 m battle-area terrain. After updating, run `tools\update-game-data.bat` once:
-it builds the vehicle weapon catalogue and adds the battle areas to every map.
+2 m battle-area terrain, and the map's buildings, walls, rocks and trees
+(v0.10.1). After updating, run `tools\update-game-data.bat` once: it builds the
+vehicle weapon catalogue and adds the battle areas and objects to every map.
 Details: `docs\ground.md`.
 
 ## What is here (v0.10.0, 2026-11-12)

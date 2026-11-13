@@ -38,6 +38,8 @@ type wtrTerrain struct {
 	dx0, dz0, dcell float64
 	dhMin, dhMax    float64
 	dh              []uint16
+	// hand-placed buildings, walls and rocks (terrain schema 3): shells stop at them
+	obstacles *obstacleIndex
 }
 
 func wtrLoadTerrain(level string) *wtrTerrain {
@@ -69,13 +71,21 @@ func wtrLoadTerrain(level string) *wtrTerrain {
 		HMin       float64 `json:"hMin"`
 		HMax       float64 `json:"hMax"`
 		WaterLevel float64 `json:"waterLevel"`
-		Detail     *struct {
+		Objects    *struct {
+			Types []struct {
+				Name string     `json:"name"`
+				Kind string     `json:"kind"`
+				Min  [3]float64 `json:"min"`
+				Max  [3]float64 `json:"max"`
+			} `json:"types"`
+		} `json:"objects"`
+		Detail *struct {
 			W, H          int
 			X0, Z0, CellM float64
 			HMin, HMax    float64
 		} `json:"detail"`
 	}
-	var detailRaw []byte
+	var detailRaw, objectsRaw []byte
 	for _, f := range zr.File {
 		rc, err := f.Open()
 		if err != nil {
@@ -93,6 +103,8 @@ func wtrLoadTerrain(level string) *wtrTerrain {
 			}
 		case "detail.u16":
 			detailRaw = raw
+		case "objects.bin":
+			objectsRaw = raw
 		case "height.u16":
 			t.h = make([]uint16, len(raw)/2)
 			for i := range t.h {
@@ -110,6 +122,13 @@ func wtrLoadTerrain(level string) *wtrTerrain {
 		for i := range t.dh {
 			t.dh[i] = binary.LittleEndian.Uint16(detailRaw[i*2:])
 		}
+	}
+	if meta.Objects != nil && len(objectsRaw) >= 52 {
+		var types []obstacleType
+		for _, ty := range meta.Objects.Types {
+			types = append(types, obstacleType{Kind: ty.Kind, Min: ty.Min, Max: ty.Max})
+		}
+		t.obstacles = newObstacleIndex(types, objectsRaw)
 	}
 	return t
 }

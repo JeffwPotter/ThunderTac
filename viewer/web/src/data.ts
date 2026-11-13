@@ -70,6 +70,16 @@ export interface Terrain {
   hMin: number; hMax: number; water: number;
   h: Float32Array;   // n*n, rows south to north
   detail: TerrainDetail | null;   // 2 m grid of a tank battle area (terrain schema 2)
+  objects: MapObjects | null;     // hand-placed buildings, walls, rocks, trees (terrain schema 3)
+}
+
+// Map objects from the level file and the game's object descriptions.
+// For object i: type t[i]; position p[3i..]; transform columns r[9i..]
+// (local x, y, z axes in world space, scale included). Game coordinates.
+export interface MapObjects {
+  n: number;
+  types: { name: string, kind: 'building' | 'wall' | 'rock' | 'tree', min: number[], max: number[] }[];
+  t: Uint16Array; p: Float32Array; r: Float32Array;
 }
 
 export interface TerrainDetail {
@@ -248,7 +258,24 @@ export async function loadTerrain(level: string): Promise<Terrain | null> {
         }
       } catch (e) { /* none */ }
     }
-    return { n, x0: m.x0, z0: m.z0, x1: m.x1, z1: m.z1, cell: m.cellM, hMin: m.hMin, hMax: m.hMax, water: m.waterLevel, h, detail };
+    let objects: MapObjects | null = null;
+    if (m.objects && m.objects.count > 0) {
+      try {
+        const or = await fetch(base + 'objects.bin');
+        if (or.ok) {
+          const buf = await or.arrayBuffer(), dv = new DataView(buf), cnt = Math.floor(buf.byteLength / 52);
+          const t = new Uint16Array(cnt), p = new Float32Array(cnt * 3), r = new Float32Array(cnt * 9);
+          for (let i = 0; i < cnt; i++) {
+            const o = i * 52;
+            t[i] = dv.getUint16(o, true);
+            for (let k = 0; k < 3; k++) p[i * 3 + k] = dv.getFloat32(o + 4 + 4 * k, true);
+            for (let k = 0; k < 9; k++) r[i * 9 + k] = dv.getFloat32(o + 16 + 4 * k, true);
+          }
+          objects = { n: cnt, types: m.objects.types || [], t, p, r };
+        }
+      } catch (e) { /* none */ }
+    }
+    return { n, x0: m.x0, z0: m.z0, x1: m.x1, z1: m.z1, cell: m.cellM, hMin: m.hMin, hMax: m.hMax, water: m.waterLevel, h, detail, objects };
   } catch (e) {
     return null;
   }

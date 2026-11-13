@@ -180,7 +180,7 @@ shots[]: t (fire time, ms), unit, weapon (index in the vehicle's weapon list),
          bearingDeg, elevDeg (recorded gun direction; bearing -1 = unknown),
          elevAdjDeg? (kill shots: elevation change that puts the arc on the victim, at most 1.5°),
          p0, n (arc points p0..p0+n-1, every pathDtMs from t), tEnd,
-         end: vehicle | aircraft | ground | range | none, hit? (unit id), kill?, missM? (kill shots: closest approach to the victim)
+         end: vehicle | aircraft | ground | object (building or rock, v0.10.1) | range | none, hit? (unit id), kill?, missM? (kill shots: closest approach to the victim)
 ```
 Only the firing, the gun direction and the rounds left are recorded; **the arc is
 computed** (gravity, drag on the shell's ballistic calibre, standard atmosphere,

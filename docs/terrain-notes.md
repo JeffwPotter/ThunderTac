@@ -170,3 +170,41 @@ north, at the HM2's own cell size (2 m on all three tank maps checked: 2048 × 2
 4.1 km), subsampled only above 4096 × 4096. Ground vehicles' positions sit on it
 to a median of 0.005 m. Readers that only know schema 1 ignore it. The decoder
 uses it for shell arcs (`heightFine`); aircraft rules keep the 128 m grid.
+
+### Schema 3 (v0.10.1): placed objects
+`objects.bin` + `terrain.json` `objects { count, types[{name, kind, min, max}], byKind, placedInLevel, … }`.
+Per object 52 bytes: `u16 type, u16 0, f32 x, y, z`, then the 3×3 transform as
+three columns (the object's local x, y, z axes in world space, scale included).
+`kind`: building | wall | rock | tree. Draw the type's box `min..max` in local
+coordinates through that transform.
+
+**Where they come from** (`decoder/cmd/wtassets/objects.go`):
+- Placement: the level's `RIGz` block (DagorEngine `rendInstGen.cpp`,
+  `riGenData.h`, `genObjUtil.h`, BSD-3-Clause). Block 1 (Oodle, u32 unpacked size
+  first) is a memory image of `RendInstGenData`: Tabs are `{u32 offset, u32 count,
+  8 unused}`, pointers are u32 offsets from the image start; header at 8 cells,
+  24/28 cells W/H, 32 `cellSz` (×`grid2world` at 112 = cell size in metres),
+  34 flags (bit 0: 8-byte counters), 35 per-instance dwords, 64/68 world origin
+  x/z, 128 object types (32 bytes each: name pointer at +8, flags at +24:
+  bit 0 position-only, bit 1 palette rotation, bit 2 no seeds). Cells are 552
+  bytes: `htMin, htDelta` at 24/26, `riDataRelOfs` at 28, 65 counter pointers at 32.
+  Block 2 holds one Dagor block per cell at block-2 start + `riDataRelOfs`;
+  instances are 16-bit packed transforms (`unpack_tm_full`: rotation ×1/256,
+  position × cell size/32767 + cell origin; y from `htMin`, `htDelta`) or
+  position + scale (`unpack_tm_pos`), plus 4 bytes per per-instance dword.
+- Sizes and kinds: `content/*/res/riDesc.bin` (u8 2, u24 size, zstd FAT BLK):
+  `bbox0`/`bbox1` per object type; trees by name or tree material.
+- Kept: buildings (≥ 2 m tall and wide), walls/fences (long and thin), rocks
+  (≥ 1.5 m, at most 60 m after scaling: terrain-scale formations up to hundreds
+  of metres, mostly buried, are left out), trees and bushes ≥ 1.2 m. Dropped:
+  small props, building pieces (`_dp_`), things vehicles drive over or through
+  (trenches, snowdrifts, awnings, tents, bridges).
+- **Not included:** forests and scattered vegetation the game generates at load
+  time from land-class density maps (`*_forest_*`, `*_detailed_biome`).
+
+**Checks** (three Ground RB maps): objects sit on the 2 m terrain (median
+0.00 m for buildings, walls and trees). Tank positions inside building boxes:
+5 of 28,140 (Sinai, abandoned trucks), 5 of 26,051, 77 of 24,531 (inside a
+factory hall); with the buildings moved 30 m it is 642 of 28,140.
+Counts: Sinai 6,868 objects, Eastern Europe 49,093 (40,000 trees and bushes),
+Soviet suburbs 6,731.

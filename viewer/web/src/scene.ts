@@ -32,6 +32,8 @@ export interface Settings {
   mgRounds: boolean;          // machine-gun rounds (14.7 mm and smaller)
   shellKeep: number;          // seconds an arc stays after it lands; -1 = keep all
   gunLines: 'off' | 'focus' | 'all';  // line along each vehicle's gun
+  objects: boolean;           // buildings, walls and rocks from the map file
+  trees: boolean;             // hand-placed trees and bushes
 }
 
 export const COLORS = {
@@ -172,6 +174,7 @@ export class Viewer {
   private turretGeo = turretGeometry();
   private shellSeg!: Segments; private mgSeg!: Segments; private gunSeg!: Segments; private impactPts!: THREE.Points; private headPts!: THREE.Points;
   private detailMesh: THREE.Mesh | null = null; private detailTex: THREE.CanvasTexture | null = null;
+  private objMeshes: { kind: string, mesh: THREE.InstancedMesh }[] = [];
   private msGeo: THREE.BufferGeometry;
   private beamGeo: THREE.BufferGeometry;
   private cmPts!: THREE.Points; private bombPts!: THREE.Points; private groundPts!: THREE.Points; private deadPts!: THREE.Points; private activePts!: THREE.Points;
@@ -587,7 +590,50 @@ export class Viewer {
     skirt.rotation.x = -Math.PI / 2; skirt.position.y = (tr ? Math.min(tr.hMin, tr.water) : 0) - 30; this.root.add(skirt);
     this.detailMesh = null; this.detailTex = null;
     if (dt) this.buildDetail(tr!);
+    this.buildObjects(tr);
     this.paintTerrain();
+  }
+
+  // Buildings, walls, rocks and trees: one instanced shape per kind. Each object
+  // is its type's bounding box (trees: a cone in it), placed with the object's
+  // own transform. Game x,y,z -> drawn at x,y,-z: M3 = F·M·F with F = diag(1,1,-1)
+  // keeps the transform a proper rotation (no mirroring).
+  private buildObjects(tr: Terrain | null) {
+    this.objMeshes = [];
+    const ob = tr ? tr.objects : null; if (!ob) return;
+    const STYLE: { [k: string]: { color: number, geo: THREE.BufferGeometry } } = {
+      building: { color: 0xc9bfae, geo: new THREE.BoxGeometry(1, 1, 1) },
+      wall: { color: 0x9a948a, geo: new THREE.BoxGeometry(1, 1, 1) },
+      rock: { color: 0x8a8070, geo: new THREE.DodecahedronGeometry(0.5, 0) },
+      tree: { color: 0x4f6b3a, geo: new THREE.ConeGeometry(0.5, 1, 7) },
+    };
+    const byKind = new Map<string, number[]>();
+    for (let i = 0; i < ob.n; i++) {
+      const ty = ob.types[ob.t[i]]; if (!ty) continue;
+      let l = byKind.get(ty.kind); if (!l) { l = []; byKind.set(ty.kind, l); } l.push(i);
+    }
+    const m = new THREE.Matrix4();
+    for (const [kind, list] of byKind) {
+      const st = STYLE[kind]; if (!st) continue;
+      const mesh = new THREE.InstancedMesh(st.geo, new THREE.MeshLambertMaterial({ color: st.color, flatShading: true }), list.length);
+      list.forEach((i, k) => {
+        const ty = ob.types[ob.t[i]], r = ob.r, b = i * 9, p = ob.p;
+        const sx = ty.max[0] - ty.min[0], sy = ty.max[1] - ty.min[1], sz = ty.max[2] - ty.min[2];
+        const cx = (ty.max[0] + ty.min[0]) / 2, cy = (ty.max[1] + ty.min[1]) / 2, cz = (ty.max[2] + ty.min[2]) / 2;
+        // A = F R F (columns: x axis, y axis, z axis), centre offset F R c
+        const ax = [r[b], r[b + 1], -r[b + 2]], ay = [r[b + 3], r[b + 4], -r[b + 5]], az = [-r[b + 6], -r[b + 7], r[b + 8]];
+        const ox = p[i * 3] + r[b] * cx + r[b + 3] * cy + r[b + 6] * cz;
+        const oy = p[i * 3 + 1] + r[b + 1] * cx + r[b + 4] * cy + r[b + 7] * cz;
+        const oz = -(p[i * 3 + 2] + r[b + 2] * cx + r[b + 5] * cy + r[b + 8] * cz);
+        m.set(ax[0] * sx, ay[0] * sy, az[0] * sz, ox,
+          ax[1] * sx, ay[1] * sy, az[1] * sz, oy,
+          ax[2] * sx, ay[2] * sy, az[2] * sz, oz,
+          0, 0, 0, 1);
+        mesh.setMatrixAt(k, m);
+      });
+      mesh.instanceMatrix.needsUpdate = true; mesh.computeBoundingSphere();
+      this.root.add(mesh); this.objMeshes.push({ kind, mesh });
+    }
   }
 
   // The tank battle area at 2 m (shown on an 8 m mesh; the picture uses every sample).
@@ -1004,6 +1050,7 @@ export class Viewer {
     this.groundPts.geometry.setDrawRange(0, st.ground ? this.nStaticGround : 0);
     nDead = this.updateGround(t, nDead, pxK, deadPos, deadCol);
     this.updateShells(t);
+    for (const o of this.objMeshes) o.mesh.visible = o.kind === 'tree' ? st.trees : st.objects;
 
     this.deadPts.geometry.setDrawRange(0, nDead); deadPos.needsUpdate = true; deadCol.needsUpdate = true;
 

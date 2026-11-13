@@ -42,6 +42,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
+	case "objects-debug":
+		if err := objectsDebug(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
 	case "terrain":
 		if err := terrainCmd(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)

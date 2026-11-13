@@ -12,7 +12,7 @@ const DEFAULTS: Settings = {
   me: 'spurzz', wingmen: '', pkScope: 'all', liveRecord: false, activeMark: true, units: 'metric', labels: 'all', lblName: true, lblType: true, lblAlt: true, lblSpeed: false, missileLabels: true,
   acTrail: 30, msTrail: -1, missiles: true, cms: true, bombs: true, ground: true, ai: true, dead: false, sticks: true,
   radar: 'focus', desig: 'focus', seeker: true, msKeep: 'focus', view: '3d', scanZone: true, airfields: true, areas: false, trailStyle: 'ribbon', lineWidth: 2, vector: false, dlz: true, shade: true, grid: true,
-  shells: true, mgRounds: true, shellKeep: 3, gunLines: 'focus',
+  shells: true, mgRounds: true, shellKeep: 3, gunLines: 'focus', objects: true, trees: true,
 };
 const settings: Settings = Object.assign({}, DEFAULTS);
 try { Object.assign(settings, JSON.parse(localStorage.getItem('wtrv.settings') || '{}')); } catch (e) { /* first run */ }
@@ -346,7 +346,7 @@ function groundPanel(u: Unit, tt: number, spd: number, add: (k: string, v: strin
     if (last.cls !== 'mg' && last.cls !== 'smoke') {
       v += ' · last ' + (last.shell ? shellLabel(last.shell) + (last.shellSource === 'guess' ? ' (guessed)' : '') : '?');
       if (last.reloadS >= 1) v += tt < ready ? ' · reloading, ready in ' + ((ready - tt) / 1000).toFixed(1) + ' s' : ' · ready';
-      else if (last.reloadS > 0) v += ' · ' + Math.round(60 / last.reloadS) + ' rounds/min';
+      else if (last.reloadS > 0 && last.cls === 'cannon') v += ' · ' + Math.round(60 / last.reloadS) + ' rounds/min';
       if (last.ammoLeft >= 0) v += ' · ' + last.ammoLeft + ' of that round left';
     }
     add(name, v, true);

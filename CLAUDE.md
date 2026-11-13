@@ -32,8 +32,10 @@ and steers. Explain changes in plain language.
      names it saw in `keys`).
   3. Ground battles (v0.10.0): tank attitude, gun direction, shots with computed
      shell arcs (`decoder/cmd/wtdecode/wtr_ground.go`), vehicle weapon catalogue
-     (`decoder/cmd/wtassets/ground_catalog.go`), 2 m battle-area terrain. Next:
-     a ground debrief.
+     (`decoder/cmd/wtassets/ground_catalog.go`), 2 m battle-area terrain, map
+     objects (buildings/walls/rocks/trees from the level `RIGz` block and
+     `riDesc.bin`; `decoder/cmd/wtassets/objects.go`). Next: forests from
+     land-class density maps (maybe), then a ground debrief.
 * **Tried and rejected (with data, v0.9.0; see `docs/analysis.md`):** extra
   turning drag against beaming targets; smoothing aircraft speeds.
 

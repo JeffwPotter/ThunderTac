@@ -63,6 +63,16 @@ Tank maps carry a 2 m heightmap of the 4 km battle area. `wtassets terrain` now
 keeps it (terrain schema 2, `detail.u16`). The viewer draws it as its own mesh
 with a 250 m grid; the whole map uses the battle area's height scale for colour.
 
+## Buildings, walls, rocks and trees (v0.10.1)
+Hand-placed map objects come from the level file and the game's object
+descriptions (format and checks: `docs/terrain-notes.md`, schema 3). The viewer
+draws them as simple shapes (boxes, rock blobs, tree cones; Display tab, Map).
+Shell arcs stop inside buildings and rocks (`end: object`), using the inner 80%
+of each box, not within the first 15 m of flight (a tank behind cover starts
+inside the box) and never for shots known to have killed. Walls, fences and
+trees do not stop shells. Forests generated from density maps are not included
+yet, and buildings destroyed during the match still show.
+
 ## Viewer
 - Tanks: hull (heading, pitch, roll) and a turret that turns to the recorded gun
   bearing; label with player and vehicle; ground track. Dead vehicles: a cross

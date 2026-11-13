@@ -57,6 +57,11 @@ func terrainCmd(args []string) error {
 	if err := os.MkdirAll(*out, 0755); err != nil {
 		return err
 	}
+	if n, err := loadRiDescs(*game); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: map objects (buildings, rocks, trees) not available:", err)
+	} else {
+		fmt.Printf("object descriptions: %d types\n", n)
+	}
 	infos, err := readLevelBlks(filepath.Join(*game, "aces.vromfs.bin"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "warning: map corners not available:", err)
@@ -128,17 +133,18 @@ func terrainCmd(args []string) error {
 
 // builtLevel is one finished terrain, ready to write.
 type builtLevel struct {
-	meta   map[string]any
-	raw    []byte
-	detail []byte // optional fine grid of the tank battle area (detail.u16)
-	msg    string
+	meta    map[string]any
+	raw     []byte
+	detail  []byte // optional fine grid of the tank battle area (detail.u16)
+	objects []byte // optional placed objects (objects.bin)
+	msg     string
 }
 
 func (a *builtLevel) same(b *builtLevel) bool {
-	if a == nil || b == nil || !bytes.Equal(a.raw, b.raw) || !bytes.Equal(a.detail, b.detail) {
+	if a == nil || b == nil || !bytes.Equal(a.raw, b.raw) || !bytes.Equal(a.detail, b.detail) || !bytes.Equal(a.objects, b.objects) {
 		return false
 	}
-	for _, k := range []string{"x0", "z0", "x1", "z1", "hMin", "hMax", "source", "detail"} {
+	for _, k := range []string{"x0", "z0", "x1", "z1", "hMin", "hMax", "source", "detail", "objects"} {
 		if fmt.Sprint(a.meta[k]) != fmt.Sprint(b.meta[k]) {
 			return false
 		}
@@ -197,7 +203,7 @@ func writeWTT(outDir, stem string, bl *builtLevel) error {
 	for _, e := range []struct {
 		name string
 		data []byte
-	}{{"terrain.json", js}, {"height.u16", bl.raw}, {"detail.u16", bl.detail}} {
+	}{{"terrain.json", js}, {"height.u16", bl.raw}, {"detail.u16", bl.detail}, {"objects.bin", bl.objects}} {
 		if e.data == nil {
 			continue
 		}
@@ -987,7 +993,13 @@ func buildTerrain(path, stem string, li levelInfo, n int) (*builtLevel, error) {
 		meta["schema"] = 2
 		source += "; " + dmsg
 	}
-	return &builtLevel{meta: meta, raw: raw, detail: detail, msg: fmt.Sprintf("%s; heights %.0f..%.0f m; %d of %d cells filled from neighbours", source, hMin, hMax, empty, n*n)}, nil
+	objs, ometa, omsg := buildObjects(b)
+	if objs != nil {
+		meta["objects"] = ometa
+		meta["schema"] = 3
+		source += "; " + omsg
+	}
+	return &builtLevel{meta: meta, raw: raw, detail: detail, objects: objs, msg: fmt.Sprintf("%s; heights %.0f..%.0f m; %d of %d cells filled from neighbours", source, hMin, hMax, empty, n*n)}, nil
 }
 
 // buildDetail keeps the fine heightmap of a tank battle area (2 m cells on
