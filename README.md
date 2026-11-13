@@ -44,6 +44,14 @@ window does not appear, run `bin\wtviewer-console.exe` to see messages (or read
 `%LocalAppData%\WTReplayViewer\viewer.log`); `bin\wtviewer.exe -browser`
 opens it in Edge/your browser instead.
 
+## Where your matches are kept (v0.10.2)
+Converted matches live in `%LocalAppData%\WTReplayViewer\sessions`, outside
+the program folder, so updating (even into a new folder) never loses them.
+`tools\open-matches-folder.bat` opens it. On start the viewer copies in any
+match it finds in the program's own `sessions` folder (older installs, matches
+that come with an update) that it has not taken in before; deleting a match
+from the matches folder keeps it deleted.
+
 ## Ground battles (v0.10.0)
 Ground RB matches convert and play like air ones: tanks with turrets that follow
 the recorded gun direction, shell arcs (cannon vs machine gun), kills, and the

@@ -28,7 +28,7 @@ import (
 	"strings"
 )
 
-const version = "0.10.1"
+const version = "0.10.2"
 
 //go:embed webdist
 var webFS embed.FS
@@ -70,7 +70,7 @@ type sessionInfo struct {
 func main() {
 	exe, _ := os.Executable()
 	root := filepath.Dir(filepath.Dir(exe))
-	sessDir := flag.String("sessions", filepath.Join(root, "sessions"), "folder with converted matches (.wtr)")
+	sessDir := flag.String("sessions", defaultLibraryDir(root), "folder with converted matches (.wtr); kept outside the program folder so updates do not lose them")
 	terrDir := flag.String("terrain", filepath.Join(root, "assets", "terrain"), "folder with terrain files (.wtt)")
 	catDir := flag.String("catalog", filepath.Join(root, "assets", "catalog"), "folder with catalogue files from the game install")
 	port := flag.Int("port", 0, "port to use (0 = pick a free one)")
@@ -85,6 +85,13 @@ func main() {
 	decoder := flag.String("decoder", filepath.Join(root, "bin", decName), "replay decoder used for fetched matches")
 	fetchID := flag.String("fetch", "", "download and convert the match with this session ID, then exit")
 	flag.Parse()
+	// take in matches from the program's own sessions folder (older installs,
+	// matches shipped with an update)
+	if n, err := importOldSessions(filepath.Join(root, "sessions"), *sessDir); err != nil {
+		fmt.Fprintln(os.Stderr, "matches folder:", err)
+	} else if n > 0 {
+		fmt.Printf("Copied %d match(es) from %s into %s\n", n, filepath.Join(root, "sessions"), *sessDir)
+	}
 	if *fetchID != "" {
 		os.Exit(fetchCLI(*sessDir, *decoder, *fetchID))
 	}

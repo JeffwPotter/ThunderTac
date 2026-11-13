@@ -20,6 +20,10 @@ and steers. Explain changes in plain language.
   network use is "+ Add match", which downloads public replay files from
   `wt-game-replays.warthunder.com` (`viewer/server/fetch.go`).
 * **Out of scope:** WebRTC/WebSocket live multi-user playback rooms, unless asked.
+* **Matches folder (v0.10.2):** converted matches, their caches and own-ship
+  recordings live in `%LocalAppData%\WTReplayViewer\sessions`
+  (`viewer/server/library_dir.go`), never in the program folder, so updates keep
+  them; the program's own `sessions` folder is only an import source.
 * **Own-ship telemetry (v0.9.0):** `viewer/server/live.go` records the game's
   `localhost:8111` data while the viewer is open (opt-in setting) and matches each
   flight to the player's aircraft (`docs/live-telemetry.md`). Results live in a
